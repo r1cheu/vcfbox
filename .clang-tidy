@@ -1,0 +1,18 @@
+Checks: >
+  -*,
+  clang-analyzer-*,
+  bugprone-*,
+  cert-*
+  modernize-*,
+  readability-*,
+  performance-*,
+  cppcoreguidelines-*,
+  hicpp-*,
+  google-*,
+  openmp-*,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-magic-numbers,
+FormatStyle: file
+CheckOptions:
+  readability-identifier-length.MinimumParameterNameLength: "0"
+  readability-identifier-length.MinimumVariableNameLength: "0"

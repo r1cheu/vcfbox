@@ -1,0 +1,16 @@
+
+# pixi environments
+.pixi
+*.egg-info
+.aider*
+
+.build
+.cache
+test.vcf
+test_n.map
+test_n.ped
+vcf_to_map.py
+compile_commands.json
+.vscode
+GX_f1_flt.list
+data
