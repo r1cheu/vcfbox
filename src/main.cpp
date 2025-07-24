@@ -12,6 +12,7 @@ int main(int argc, char** argv)
     std::string vcf;
     std::string paired_sample;
     std::string output;
+    bool keep_old_samples = false;
     app.add_option("-v,--vcf", vcf, "Path to input VCF file")->required();
     app.add_option(
            "-p,--paired-sample",
@@ -26,13 +27,17 @@ int main(int argc, char** argv)
            "input "
            "VCF file.")
         ->default_str("output.vcf");
+    app.add_flag(
+        "-k,--keep-old-samples",
+        keep_old_samples,
+        "Keep old samples in the output VCF file, default is false.");
     CLI11_PARSE(app, argc, argv);
 
     std::string mode = parse_mode(output);
     try
     {
         auto pairs = parse_sample_pairs(paired_sample);
-        combine_genotypes(vcf, pairs, output, mode);
+        combine_genotypes(vcf, pairs, keep_old_samples, output, mode);
     }
     catch (const std::exception& e)
     {

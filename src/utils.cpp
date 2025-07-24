@@ -59,7 +59,7 @@ auto create_progress(size_t total, size_t& progress_counters)
     auto pbar = bk::ProgressBar(
         &progress_counters,
         {.total = total,
-         .format = "{bar} {value}/{total} ({speed:.1f}/s)",
+         .format = "Adding SNPs {bar} {value}/{total} ({speed:.1f}/s)",
          .speed = 0.1,
          .style = custom_bar_style,
          .show = false});

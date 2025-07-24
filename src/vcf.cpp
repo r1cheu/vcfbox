@@ -10,8 +10,10 @@
 #include <utility>
 #include <vector>
 
+#include "barkeep.h"
 #include "utils.h"
 #include "vcf_raii.h"
+namespace bk = barkeep;
 
 std::vector<detail::SamplePair> parse_sample_pairs(const std::string& file_path)
 {
@@ -43,6 +45,7 @@ std::vector<detail::SamplePair> parse_sample_pairs(const std::string& file_path)
 void combine_genotypes(
     const std::string& vcf_path,
     const std::vector<detail::SamplePair>& sample_pairs,
+    bool keep_old_samples,
     const std::string& out_path,
     const std::string& mode)
 {
@@ -63,7 +66,8 @@ void combine_genotypes(
         throw std::runtime_error("Could not open output file: " + out_path);
     }
 
-    BcfHdr output_header(detail::init_bcf_head(header.get(), sample_pairs));
+    BcfHdr output_header(
+        detail::init_bcf_head(header.get(), sample_pairs, keep_old_samples));
 
     if (bcf_hdr_write(output_file.get(), output_header.get()) != 0)
     {
@@ -90,7 +94,8 @@ void combine_genotypes(
             continue;
         }
 
-        auto out_gts = detail::concat_gt(sample_pairs, sample_to_idx, gt.p_);
+        auto out_gts = detail::concat_gt(
+            sample_pairs, sample_to_idx, gt.p_, keep_old_samples, gt.n_);
         detail::copy_rec_info(
             header.get(), output_header.get(), in_rec.get(), out_rec.get());
         bcf_update_genotypes(
@@ -111,6 +116,14 @@ namespace detail
 size_t count_records(std::string_view vcf_path)
 {
     size_t rec_count = 0;
+    auto counter = bk::Counter(
+        &rec_count,
+        {
+            .message = "Counting SNPs",
+            .speed = 1.,
+            .speed_unit = "snp/s",
+        });
+
     HtsFile vcf_file(bcf_open(vcf_path.data(), "r"));
     if (!vcf_file)
     {
@@ -194,7 +207,8 @@ void check_sample_consistence(
 
 bcf_hdr_t* init_bcf_head(
     bcf_hdr_t* header,
-    const std::vector<SamplePair>& sample_pairs)
+    const std::vector<SamplePair>& sample_pairs,
+    bool keep_old_samples)
 {
     bcf_hdr_t* output_header = bcf_hdr_init("w");
 
@@ -219,11 +233,20 @@ bcf_hdr_t* init_bcf_head(
             "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">");
     }
 
+    if (keep_old_samples)
+    {
+        for (int i = 0; i < bcf_hdr_nsamples(header); ++i)
+        {
+            bcf_hdr_add_sample(output_header, header->samples[i]);
+        }
+    }
+
     for (const auto& pair : sample_pairs)
     {
         bcf_hdr_add_sample(
             output_header, (pair.first + "_" + pair.second).c_str());
     }
+
     bcf_hdr_add_sample(output_header, nullptr);  // 更新样本列表
 
     return output_header;
@@ -252,10 +275,34 @@ void copy_rec_info(
 std::vector<int32_t> concat_gt(
     const std::vector<std::pair<std::string, std::string>>& sample_pairs,
     const std::unordered_map<std::string, int>& sample_to_idx,
-    const int32_t* gt_arr)
+    const int32_t* gt_arr,
+    bool keep_old_samples,
+    int n_gt)
 {
     std::vector<int32_t> out_gts;
-    out_gts.reserve(sample_pairs.size() * 2);
+    if (keep_old_samples)
+    {
+        out_gts.reserve(n_gt + (sample_pairs.size() * 2));
+        for (int i = 0; i < n_gt / 2; ++i)
+        {
+            int32_t gt0 = gt_arr[i * 2];
+            int32_t gt1 = gt_arr[i * 2 + 1];
+            if (bcf_gt_is_missing(gt0) || gt0 != gt1)
+            {
+                out_gts.push_back(bcf_gt_missing);
+                out_gts.push_back(bcf_gt_missing);
+            }
+            else
+            {
+                out_gts.push_back(gt0);
+                out_gts.push_back(gt1);
+            }
+        }
+    }
+    else
+    {
+        out_gts.reserve(sample_pairs.size() * 2);
+    }
     for (const auto& pair : sample_pairs)
     {
         int f_idx = sample_to_idx.at(pair.first);
