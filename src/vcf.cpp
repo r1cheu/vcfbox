@@ -14,7 +14,8 @@
 #include "utils.h"
 #include "vcf_raii.h"
 namespace bk = barkeep;
-
+namespace vcfbox
+{
 std::vector<detail::SamplePair> parse_sample_pairs(const std::string& file_path)
 {
     std::vector<detail::SamplePair> pairs;
@@ -50,7 +51,7 @@ void combine_genotypes(
     const std::string& mode)
 {
     detail::check_sample_consistence(vcf_path, sample_pairs);
-    size_t n_lines = detail::count_records(vcf_path);
+    size_t n_lines = vcfbox::count_records(vcf_path);
 
     HtsFile vcf_file(bcf_open(vcf_path.c_str(), "r"));
     BcfHdr header(bcf_hdr_read(vcf_file.get()));
@@ -110,44 +111,9 @@ void combine_genotypes(
     bar->done();
 }
 
+}  // namespace vcfbox
 namespace detail
 {
-
-size_t count_records(std::string_view vcf_path)
-{
-    size_t rec_count = 0;
-    auto counter = bk::Counter(
-        &rec_count,
-        {
-            .message = "Counting SNPs",
-            .speed = 1.,
-            .speed_unit = "snp/s",
-        });
-
-    HtsFile vcf_file(bcf_open(vcf_path.data(), "r"));
-    if (!vcf_file)
-    {
-        throw std::runtime_error(
-            "Could not open VCF file: " + std::string(vcf_path));
-    }
-    BcfHdr header(bcf_hdr_read(vcf_file.get()));
-    if (!header)
-    {
-        throw std::runtime_error(
-            "Could not read VCF header from: " + std::string(vcf_path));
-    }
-    BcfRec rec(bcf_init());
-    if (!rec)
-    {
-        throw std::runtime_error("Failed to initialize VCF record.");
-    }
-
-    while (bcf_read(vcf_file.get(), header.get(), rec.get()) == 0)
-    {
-        rec_count++;
-    }
-    return rec_count;
-}
 
 void check_sample_consistence(
     std::string_view vcf_path,
