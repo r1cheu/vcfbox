@@ -17,6 +17,9 @@ int main(int argc, char** argv)
     auto* count
         = app.add_subcommand("count", "Count the number of snps in a VCF file");
 
+    auto* convert = app.add_subcommand(
+        "convert", "Convert VCF to various formats (e.g., HapMap)");
+
     count->add_option("-v,--vcf", vcf, "Path to input VCF file")->required();
     combine->add_option("-v,--vcf", vcf, "Path to input VCF file")->required();
     combine
@@ -38,6 +41,15 @@ int main(int argc, char** argv)
         "-k,--keep-old-samples",
         keep_old_samples,
         "Keep old samples in the output VCF file, default is false.");
+
+    convert->add_option("-v,--vcf", vcf, "Path to input VCF file")->required();
+    convert
+        ->add_option(
+            "-o,--output",
+            output,
+            "Path to output file, if not provided, will be the same as input "
+            "VCF file.")
+        ->default_str("output.hmp");
     CLI11_PARSE(app, argc, argv);
 
     if (*combine)
@@ -58,6 +70,26 @@ int main(int argc, char** argv)
     else if (*count)
     {
         vcfbox::count_records(vcf);
+    }
+    else if (*convert)
+    {
+        try
+        {
+            if (output.substr(output.find_last_of('.') + 1) == "hmp")
+            {
+                vcfbox::to_hapmap(vcf, output);
+            }
+            else
+            {
+                std::cerr << "Unsupported format: " << output << '\n';
+                return 1;
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Error: " << e.what() << '\n';
+            return 1;
+        }
     }
 
     return 0;

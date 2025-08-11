@@ -2,15 +2,13 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <format>
 #include <fstream>
-#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
-#include "barkeep.h"
 #include "utils.h"
 #include "vcf_raii.h"
 namespace bk = barkeep;
@@ -111,190 +109,87 @@ void combine_genotypes(
     bar->done();
 }
 
-}  // namespace vcfbox
-namespace detail
+void to_hapmap(const std::string& vcf_path, const std::string& out_path)
 {
-
-void check_sample_consistence(
-    std::string_view vcf_path,
-    const std::vector<SamplePair>& sample_pairs)
-{
-    HtsFile vcf_file(bcf_open(vcf_path.data(), "r"));
-    if (!vcf_file)
-    {
-        throw std::runtime_error(
-            "Could not open VCF file: " + std::string(vcf_path));
-    }
-
+    HtsFile vcf_file(bcf_open(vcf_path.c_str(), "r"));
     BcfHdr header(bcf_hdr_read(vcf_file.get()));
-
     if (!header)
     {
-        throw std::runtime_error(
-            "Could not read VCF header from: " + std::string(vcf_path));
+        throw std::runtime_error("Failed to read VCF header");
     }
 
-    char** sample_names = header->samples;
-    size_t num_samples = bcf_hdr_nsamples(header);
-
-    std::set<std::string> all_samples;
-
-    for (size_t i = 0; i < num_samples; ++i)
+    std::ofstream stream(out_path);
+    if (!stream)
     {
-        all_samples.insert(sample_names[i]);
+        throw std::runtime_error("Failed to open output file: " + out_path);
     }
 
-    std::vector<std::string> missing_samples;
+    stream << "rs\talleles\tchrom\tpos\tstrand\t"
+              "assembly\tcenter\tprotLSID\tassayLSID\t"
+              "panel\tQCcode\t";
 
-    for (const auto& pair : sample_pairs)
+    for (int i = 0; i < bcf_hdr_nsamples(header); ++i)
     {
-        if (!all_samples.contains(pair.first))
+        stream << header->samples[i] << "\t";
+    }
+    stream << "\n";
+    BcfRec in_rec(bcf_init());
+    Genotypes gt;
+    size_t processd_snp = 0;
+    auto counter
+        = detail::create_counter("Converting to HapMap format", processd_snp);
+
+    counter->show();
+    while (bcf_read(vcf_file.get(), header.get(), in_rec.get()) == 0)
+    {
+        processd_snp++;
+        bcf_unpack(in_rec.get(), BCF_UN_ALL);
+        if (in_rec->n_allele > 2)
         {
-            missing_samples.push_back(pair.first);
+            continue;
         }
-        if (!all_samples.contains(pair.second))
+
+        std::string ref = in_rec->d.allele[0];
+        std::string alt = in_rec->d.allele[1];
+        std::string chrom = std::format("chr{:02d}", in_rec->rid + 1);
+        int32_t pos = in_rec->pos + 1;
+        std::string rs = std::format("{}_{:d}_{}_{}", chrom, pos, ref, alt);
+
+        stream << rs << "\t" << ref << "/" << alt << "\t" << chrom << "\t"
+               << pos << "\tNA\tNA\tNA\tNA\tNA\tNA\tNA\t";
+
+        if (bcf_get_genotypes(header.get(), in_rec.get(), &gt.p_, &gt.n_) <= 0)
         {
-            missing_samples.push_back(pair.second);
+            continue;
         }
-    }
 
-    if (!missing_samples.empty())
-    {
-        std::string missing_str;
-        for (const auto& s : missing_samples)
+        for (int i = 0; i < gt.n_ / 2; ++i)
         {
-            missing_str += s + ", ";
-        }
-        throw std::runtime_error(
-            "Samples not found in VCF: " + missing_str
-            + "make sure sample list is correct and matches VCF file.");
-    }
-}
-
-bcf_hdr_t* init_bcf_head(
-    bcf_hdr_t* header,
-    const std::vector<SamplePair>& sample_pairs,
-    bool keep_old_samples)
-{
-    bcf_hdr_t* output_header = bcf_hdr_init("w");
-
-    for (int i = 0; i < header->nhrec; ++i)
-    {
-        if (header->hrec[i]->type == BCF_HL_CTG)
-        {
-            bcf_hdr_add_hrec(output_header, bcf_hrec_dup(header->hrec[i]));
-        }
-    }
-
-    bcf_hrec_t* gt_hrec
-        = bcf_hdr_get_hrec(header, BCF_HL_FMT, "ID", "GT", nullptr);
-    if (gt_hrec != nullptr)
-    {
-        bcf_hdr_add_hrec(output_header, bcf_hrec_dup(gt_hrec));
-    }
-    else
-    {
-        bcf_hdr_append(
-            output_header,
-            "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">");
-    }
-
-    if (keep_old_samples)
-    {
-        for (int i = 0; i < bcf_hdr_nsamples(header); ++i)
-        {
-            bcf_hdr_add_sample(output_header, header->samples[i]);
-        }
-    }
-
-    for (const auto& pair : sample_pairs)
-    {
-        bcf_hdr_add_sample(
-            output_header, (pair.first + "_" + pair.second).c_str());
-    }
-
-    bcf_hdr_add_sample(output_header, nullptr);  // 更新样本列表
-
-    return output_header;
-}
-
-void copy_rec_info(
-    bcf_hdr_t* header,
-    bcf_hdr_t* output_header,
-    bcf1_t* in_rec,
-    bcf1_t* out_rec)
-{
-    bcf_clear(out_rec);
-    out_rec->rid
-        = bcf_hdr_name2id(output_header, bcf_hdr_id2name(header, in_rec->rid));
-    out_rec->pos = in_rec->pos;
-    bcf_update_id(output_header, out_rec, in_rec->d.id);
-    bcf_update_alleles(
-        output_header,
-        out_rec,
-        const_cast<const char**>(in_rec->d.allele),
-        in_rec->n_allele);
-
-    out_rec->qual = in_rec->qual;
-}
-
-std::vector<int32_t> concat_gt(
-    const std::vector<std::pair<std::string, std::string>>& sample_pairs,
-    const std::unordered_map<std::string, int>& sample_to_idx,
-    const int32_t* gt_arr,
-    bool keep_old_samples,
-    int n_gt)
-{
-    std::vector<int32_t> out_gts;
-    if (keep_old_samples)
-    {
-        out_gts.reserve(n_gt + (sample_pairs.size() * 2));
-        for (int i = 0; i < n_gt / 2; ++i)
-        {
-            int32_t gt0 = gt_arr[i * 2];
-            int32_t gt1 = gt_arr[i * 2 + 1];
-            if (bcf_gt_is_missing(gt0) || gt0 != gt1)
+            int32_t gt0 = gt.p_[i * 2];
+            int32_t gt1 = gt.p_[i * 2 + 1];
+            if (bcf_gt_is_missing(gt0) || bcf_gt_is_missing(gt1))
             {
-                out_gts.push_back(bcf_gt_missing);
-                out_gts.push_back(bcf_gt_missing);
+                stream << "NN\t";
+            }
+            else if (gt0 == gt1)
+            {
+                if (bcf_gt_allele(gt0) == 0)
+                {
+                    stream << ref << ref << "\t";
+                }
+                else
+                {
+                    stream << alt << alt << "\t";
+                }
             }
             else
             {
-                out_gts.push_back(gt0);
-                out_gts.push_back(gt1);
+                stream << ref << alt << "\t";
             }
         }
+        stream << "\n";
     }
-    else
-    {
-        out_gts.reserve(sample_pairs.size() * 2);
-    }
-    for (const auto& pair : sample_pairs)
-    {
-        int f_idx = sample_to_idx.at(pair.first);
-        int m_idx = sample_to_idx.at(pair.second);
-
-        int32_t f_gt0 = gt_arr[f_idx * 2];
-        int32_t f_gt1 = gt_arr[f_idx * 2 + 1];
-        int32_t m_gt0 = gt_arr[m_idx * 2];
-        int32_t m_gt1 = gt_arr[m_idx * 2 + 1];
-
-        if (bcf_gt_is_missing(f_gt0) || bcf_gt_is_missing(f_gt1)
-            || bcf_gt_is_missing(m_gt0) || bcf_gt_is_missing(m_gt1)
-            || bcf_gt_allele(f_gt0) != bcf_gt_allele(f_gt1)
-            || bcf_gt_allele(m_gt0) != bcf_gt_allele(m_gt1))
-        {
-            out_gts.push_back(bcf_gt_missing);
-            out_gts.push_back(bcf_gt_missing);
-        }
-        else
-        {
-            out_gts.push_back(bcf_gt_unphased(bcf_gt_allele(f_gt0)));
-            out_gts.push_back(bcf_gt_unphased(bcf_gt_allele(m_gt0)));
-        }
-    }
-    return out_gts;
+    counter->done();
 }
-}  // namespace detail
-//
-//
+
+}  // namespace vcfbox

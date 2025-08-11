@@ -15,9 +15,9 @@ include_directories(${HTSLIB_ROOT}/include)
 link_directories(${HTSLIB_ROOT}/lib)
 
 find_package(Threads REQUIRED)
-add_executable(vcf_combine src/main.cpp src/vcf.cpp src/utils.cpp)
+add_executable(vcfbox src/main.cpp src/vcf.cpp src/utils.cpp)
 add_executable(test src/tester.cpp)
-target_link_libraries(vcf_combine PRIVATE ${HTSLIB_ROOT}/lib/libhts.so
-                                          Threads::Threads)
+target_link_libraries(vcfbox PRIVATE ${HTSLIB_ROOT}/lib/libhts.so
+                                     Threads::Threads)
 target_link_libraries(test PRIVATE ${HTSLIB_ROOT}/lib/libhts.so
                                    Threads::Threads)
