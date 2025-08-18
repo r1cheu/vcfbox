@@ -234,7 +234,7 @@ bcf_hdr_t* init_bcf_head(
     for (const auto& pair : sample_pairs)
     {
         bcf_hdr_add_sample(
-            output_header, (pair.first + "_" + pair.second).c_str());
+            output_header, (pair.first + "~" + pair.second).c_str());
     }
 
     bcf_hdr_add_sample(output_header, nullptr);  // 更新样本列表
