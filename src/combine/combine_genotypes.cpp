@@ -1,17 +1,15 @@
-#include "commands/combine_genotypes.h"
+#include "combine/combine_genotypes.h"
 
 #include <cstddef>
-#include <cstdlib>
 #include <cstdint>
 #include <fstream>
-#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <vector>
 
+#include "common/path.h"
 #include "common/progress.h"
 #include "hts/hts_raii.h"
 
@@ -22,60 +20,52 @@ extern "C"
 
 namespace
 {
-void check_sample_consistency(
-    std::string_view vcf_path,
-    const std::vector<vcfbox::SamplePair>& sample_pairs)
+using SampleIndex = std::unordered_map<std::string, int>;
+
+SampleIndex build_sample_index(bcf_hdr_t* header)
 {
-    HtsFile vcf_file(bcf_open(vcf_path.data(), "r"));
-    if (!vcf_file)
+    SampleIndex index;
+    const int n = bcf_hdr_nsamples(header);
+    index.reserve(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i)
     {
-        throw std::runtime_error(
-            "Could not open VCF file: " + std::string(vcf_path));
+        index.emplace(header->samples[i], i);
     }
+    return index;
+}
 
-    BcfHdr header(bcf_hdr_read(vcf_file.get()));
-
-    if (!header)
-    {
-        throw std::runtime_error(
-            "Could not read VCF header from: " + std::string(vcf_path));
-    }
-
-    char** sample_names = header->samples;
-    size_t num_samples = bcf_hdr_nsamples(header);
-
-    std::set<std::string> all_samples;
-
-    for (size_t i = 0; i < num_samples; ++i)
-    {
-        all_samples.insert(sample_names[i]);
-    }
-
-    std::vector<std::string> missing_samples;
-
+void check_pairs_in_header(
+    const std::vector<vcfbox::SamplePair>& sample_pairs,
+    const SampleIndex& sample_to_idx)
+{
+    std::vector<std::string> missing;
     for (const auto& pair : sample_pairs)
     {
-        if (!all_samples.contains(pair.first))
+        if (!sample_to_idx.contains(pair.first))
         {
-            missing_samples.push_back(pair.first);
+            missing.push_back(pair.first);
         }
-        if (!all_samples.contains(pair.second))
+        if (!sample_to_idx.contains(pair.second))
         {
-            missing_samples.push_back(pair.second);
+            missing.push_back(pair.second);
         }
     }
-
-    if (!missing_samples.empty())
+    if (missing.empty())
     {
-        std::string missing_str;
-        for (const auto& sample : missing_samples)
-        {
-            missing_str += sample + ", ";
-        }
-        throw std::runtime_error(
-            "Samples not found in VCF: " + missing_str
-            + "make sure sample list is correct and matches VCF file.");
+        return;
     }
+    std::string list;
+    for (size_t i = 0; i < missing.size(); ++i)
+    {
+        if (i != 0)
+        {
+            list += ", ";
+        }
+        list += missing[i];
+    }
+    throw std::runtime_error(
+        "Samples not found in VCF: " + list
+        + ". Make sure sample list matches VCF file.");
 }
 
 bcf_hdr_t* init_bcf_header(
@@ -147,7 +137,7 @@ void copy_rec_info(
 
 std::vector<int32_t> concat_gt(
     const std::vector<vcfbox::SamplePair>& sample_pairs,
-    const std::unordered_map<std::string, int>& sample_to_idx,
+    const SampleIndex& sample_to_idx,
     const int32_t* gt_arr,
     bool keep_old_samples,
     int n_gt)
@@ -238,19 +228,23 @@ void combine_genotypes(
     const std::string& vcf_path,
     const std::vector<SamplePair>& sample_pairs,
     bool keep_old_samples,
-    const std::string& out_path,
-    const std::string& mode)
+    const std::string& out_path)
 {
-    check_sample_consistency(vcf_path, sample_pairs);
-
     HtsFile vcf_file(bcf_open(vcf_path.c_str(), "r"));
-    BcfHdr header(bcf_hdr_read(vcf_file.get()));
-    std::unordered_map<std::string, int> sample_to_idx;
-    for (int i = 0; i < bcf_hdr_nsamples(header); ++i)
+    if (!vcf_file)
     {
-        sample_to_idx[header->samples[i]] = i;
+        throw std::runtime_error("Could not open VCF file: " + vcf_path);
+    }
+    BcfHdr header(bcf_hdr_read(vcf_file.get()));
+    if (!header)
+    {
+        throw std::runtime_error("Could not read VCF header from: " + vcf_path);
     }
 
+    auto sample_to_idx = build_sample_index(header.get());
+    check_pairs_in_header(sample_pairs, sample_to_idx);
+
+    const auto mode = parse_mode(out_path);
     HtsFile output_file(hts_open(out_path.c_str(), mode.c_str()));
     if (!output_file)
     {

@@ -25,9 +25,10 @@ target_include_directories(
 add_executable(
   vcfbox
   src/main.cpp
+  src/app/combine_command.cpp
   src/app/cli.cpp
-  src/commands/combine_genotypes.cpp
-  src/commands/convert_vcf.cpp
+  src/app/parentage_command.cpp
+  src/combine/combine_genotypes.cpp
   src/common/path.cpp
   src/common/progress.cpp
   src/parentage/parentage.cpp)

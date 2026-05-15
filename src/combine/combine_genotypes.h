@@ -13,6 +13,5 @@ void combine_genotypes(
     const std::string& vcf_path,
     const std::vector<SamplePair>& sample_pairs,
     bool keep_old_samples,
-    const std::string& out_path,
-    const std::string& mode = "w");
+    const std::string& out_path);
 }  // namespace vcfbox
