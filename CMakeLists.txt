@@ -29,9 +29,11 @@ add_executable(
   src/app/cli.cpp
   src/app/parentage_command.cpp
   src/combine/combine_genotypes.cpp
+  src/common/line_writer.cpp
   src/common/path.cpp
   src/common/progress.cpp
   src/common/strings.cpp
+  src/parentage/bitmatrix.cpp
   src/parentage/build_matrix.cpp
   src/parentage/parentage.cpp)
 
