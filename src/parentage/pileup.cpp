@@ -11,8 +11,8 @@ namespace vcfbox
 {
 namespace
 {
-constexpr uint16_t kSkipMask = BAM_FUNMAP | BAM_FSECONDARY | BAM_FSUPPLEMENTARY
-                               | BAM_FQCFAIL | BAM_FDUP;
+constexpr uint16_t kSkipMask
+    = BAM_FUNMAP | BAM_FSECONDARY | BAM_FSUPPLEMENTARY | BAM_FQCFAIL | BAM_FDUP;
 
 int32_t ref_to_query_pos(const bam1_t* rec, int64_t target)
 {
@@ -82,9 +82,7 @@ void tally_read(
     {
         ++window_lo;
     }
-    for (size_t s = window_lo;
-         s < window_hi && sites[s].pos < read_end;
-         ++s)
+    for (size_t s = window_lo; s < window_hi && sites[s].pos < read_end; ++s)
     {
         const int32_t qpos = ref_to_query_pos(rec, sites[s].pos);
         if (qpos < 0)

@@ -1,12 +1,15 @@
 #include "parentage/parentage.h"
 
 #include <Eigen/Core>
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <cstddef>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "common/line_writer.h"
@@ -77,42 +80,69 @@ std::string format_loglik(double ll)
 
 void test_parentage(const ParentageTestOptions& options)
 {
-    const auto loaded = load_matrices(options.matrix_prefix);
+    const auto loaded = load_matrices(options.prefix);
     const auto bam_paths = read_lines(options.bam_list_path);
 
     const PileupOptions pileup_opts{options.min_mapq, options.min_baseq};
+    const int n_threads = std::max(1, options.threads);
 
-    LineWriter out(options.output_path);
-    out.write_line("sample\tmaternal\tpaternal\tloglik");
-
+    std::vector<Eigen::MatrixXd> ll_per_bam(bam_paths.size());
+    std::atomic<size_t> next_bam{0};
     size_t processed = 0;
     auto counter = create_counter("Scoring BAMs", processed, "bam/s");
     counter->show();
 
-    for (const auto& bam_path : bam_paths)
-    {
-        const auto sample = std::filesystem::path(bam_path).stem().string();
-        const auto counts = count_alleles(bam_path, loaded.sites, pileup_opts);
-        const auto ll = compute_pair_loglik(
-            counts,
-            loaded.m0,
-            loaded.m1,
-            loaded.p0,
-            loaded.p1,
-            options.error_rate);
-
-        for (Eigen::Index i = 0; i < ll.rows(); ++i)
+    auto worker = [&] {
+        while (true)
         {
-            for (Eigen::Index j = 0; j < ll.cols(); ++j)
+            const size_t i = next_bam.fetch_add(1);
+            if (i >= bam_paths.size())
             {
-                out.write_line(
-                    sample + "\t" + loaded.maternal_names[i] + "\t"
-                    + loaded.paternal_names[j] + "\t"
-                    + format_loglik(ll(i, j)));
+                break;
             }
+            const auto counts
+                = count_alleles(bam_paths[i], loaded.sites, pileup_opts);
+            ll_per_bam[i] = compute_pair_loglik(
+                counts,
+                loaded.m0,
+                loaded.m1,
+                loaded.p0,
+                loaded.p1,
+                options.error_rate);
+            ++processed;
         }
-        ++processed;
+    };
+
+    std::vector<std::thread> pool;
+    pool.reserve(n_threads - 1);
+    for (int t = 0; t < n_threads - 1; ++t)
+    {
+        pool.emplace_back(worker);
+    }
+    worker();
+    for (auto& t : pool)
+    {
+        t.join();
     }
     counter->done();
+
+    LineWriter out(options.output_path);
+    out.write_line("sample\tmaternal\tpaternal\tloglik");
+    for (size_t i = 0; i < bam_paths.size(); ++i)
+    {
+        const auto sample
+            = std::filesystem::path(bam_paths[i]).stem().string();
+        const auto& ll = ll_per_bam[i];
+        for (Eigen::Index r = 0; r < ll.rows(); ++r)
+        {
+            for (Eigen::Index c = 0; c < ll.cols(); ++c)
+            {
+                out.write_line(
+                    sample + "\t" + loaded.maternal_names[r] + "\t"
+                    + loaded.paternal_names[c] + "\t"
+                    + format_loglik(ll(r, c)));
+            }
+        }
+    }
 }
 }  // namespace vcfbox

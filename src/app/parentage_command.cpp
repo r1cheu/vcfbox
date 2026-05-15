@@ -19,40 +19,39 @@ ParentageCommands add_parentage_command(
         "build-matrix", "Build parentage indicator matrices from parent VCF");
     build_matrix
         ->add_option(
-            "--parents",
-            matrix_options.parents_path,
+            "-v,--vcf",
+            matrix_options.vcf_path,
             "Path to parent genotype VCF/BCF file")
         ->required();
     build_matrix
         ->add_option(
-            "--maternal",
+            "-m,--maternal",
             matrix_options.maternal_patterns,
             "Regex patterns matching maternal samples")
         ->expected(1, -1)
         ->required();
     build_matrix
         ->add_option(
-            "--paternal",
+            "-p,--paternal",
             matrix_options.paternal_patterns,
             "Regex patterns matching paternal samples")
         ->expected(1, -1)
         ->required();
     build_matrix
         ->add_option(
-            "--matrix-prefix",
-            matrix_options.matrix_prefix,
+            "-o,--prefix",
+            matrix_options.prefix,
             "Output prefix for parentage matrices")
         ->required();
 
     auto* test = parentage->add_subcommand(
         "test", "Test parentage from BAM list and parentage matrices");
-    test
-        ->add_option("--bam", test_options.bam_list_path, "Path to BAM list")
+    test->add_option("-b,--bam", test_options.bam_list_path, "Path to BAM list")
         ->required();
     test
         ->add_option(
-            "--matrix-prefix",
-            test_options.matrix_prefix,
+            "-x,--prefix",
+            test_options.prefix,
             "Input prefix for parentage matrices")
         ->required();
     test
@@ -60,13 +59,15 @@ ParentageCommands add_parentage_command(
             "-o,--output", test_options.output_path, "Path to output result")
         ->required();
     test->add_option(
-        "--error-rate",
+        "-e,--error-rate",
         test_options.error_rate,
         "Per-base sequencing error rate");
     test->add_option(
-        "--min-mapq", test_options.min_mapq, "Minimum read mapping quality");
+        "-q,--min-mapq", test_options.min_mapq, "Minimum read mapping quality");
     test->add_option(
-        "--min-baseq", test_options.min_baseq, "Minimum base quality");
+        "-Q,--min-baseq", test_options.min_baseq, "Minimum base quality");
+    test->add_option(
+        "-t,--threads", test_options.threads, "Number of worker threads");
 
     return {parentage, build_matrix, test};
 }

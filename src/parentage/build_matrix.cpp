@@ -160,17 +160,17 @@ namespace vcfbox
 {
 void build_parentage_matrices(const ParentageMatrixOptions& options)
 {
-    hts_file_ptr vcf_file(bcf_open(options.parents_path.c_str(), "r"));
+    hts_file_ptr vcf_file(bcf_open(options.vcf_path.c_str(), "r"));
     if (!vcf_file)
     {
         throw std::runtime_error(
-            "Could not open VCF file: " + options.parents_path);
+            "Could not open VCF file: " + options.vcf_path);
     }
     bcf_hdr_ptr header(bcf_hdr_read(vcf_file.get()));
     if (!header)
     {
         throw std::runtime_error(
-            "Could not read VCF header from: " + options.parents_path);
+            "Could not read VCF header from: " + options.vcf_path);
     }
 
     const auto groups = partition_samples(
@@ -181,7 +181,7 @@ void build_parentage_matrices(const ParentageMatrixOptions& options)
     std::vector<uint8_t> p0_bits;
     std::vector<uint8_t> p1_bits;
 
-    LineWriter bed(options.matrix_prefix + ".sites.bed");
+    LineWriter bed(options.prefix + ".sites.bed");
 
     bcf1_ptr rec(bcf_init());
     genotype_buffer gt;
@@ -227,17 +227,17 @@ void build_parentage_matrices(const ParentageMatrixOptions& options)
     const uint64_t rows = processed;
     const uint64_t n_mat = groups.maternal_idx.size();
     const uint64_t n_pat = groups.paternal_idx.size();
-    write_bitmatrix(options.matrix_prefix + ".M0.bin", m0_bits, rows, n_mat);
-    write_bitmatrix(options.matrix_prefix + ".M1.bin", m1_bits, rows, n_mat);
-    write_bitmatrix(options.matrix_prefix + ".P0.bin", p0_bits, rows, n_pat);
-    write_bitmatrix(options.matrix_prefix + ".P1.bin", p1_bits, rows, n_pat);
+    write_bitmatrix(options.prefix + ".M0.bin", m0_bits, rows, n_mat);
+    write_bitmatrix(options.prefix + ".M1.bin", m1_bits, rows, n_mat);
+    write_bitmatrix(options.prefix + ".P0.bin", p0_bits, rows, n_pat);
+    write_bitmatrix(options.prefix + ".P1.bin", p1_bits, rows, n_pat);
 
-    LineWriter mat_tsv(options.matrix_prefix + ".maternal.tsv");
+    LineWriter mat_tsv(options.prefix + ".maternal.tsv");
     for (const auto& name : groups.maternal_names)
     {
         mat_tsv.write_line(name);
     }
-    LineWriter pat_tsv(options.matrix_prefix + ".paternal.tsv");
+    LineWriter pat_tsv(options.prefix + ".paternal.tsv");
     for (const auto& name : groups.paternal_names)
     {
         pat_tsv.write_line(name);
