@@ -10,5 +10,6 @@ namespace vcfbox
 {
 std::shared_ptr<barkeep::CompositeDisplay> create_counter(
     const std::string& message,
-    size_t& progress_counters);
+    size_t& progress_counters,
+    const std::string& speed_unit = "snp/s");
 }  // namespace vcfbox

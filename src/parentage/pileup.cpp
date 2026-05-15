@@ -59,54 +59,76 @@ int32_t ref_to_query_pos(const bam1_t* rec, int64_t target)
     return -1;
 }
 
-void count_site(
-    htsFile* file,
-    hts_idx_t* idx,
-    int tid,
-    const Site& site,
-    const PileupOptions& opts,
-    bam1_t* rec,
-    AlleleCount& out)
+char to_upper(char c)
 {
-    hts_itr_ptr it(sam_itr_queryi(idx, tid, site.pos, site.pos + 1));
-    if (!it)
+    return static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+}
+
+void tally_read(
+    const bam1_t* rec,
+    std::span<const Site> sites,
+    size_t& window_lo,
+    size_t window_hi,
+    const PileupOptions& opts,
+    std::span<AlleleCount> counts)
+{
+    if ((rec->core.flag & kSkipMask) != 0 || rec->core.qual < opts.min_mapq)
     {
         return;
     }
-    const char ref_upper = static_cast<char>(
-        std::toupper(static_cast<unsigned char>(site.ref)));
-    const char alt_upper = static_cast<char>(
-        std::toupper(static_cast<unsigned char>(site.alt)));
-    while (sam_itr_next(file, it.get(), rec) >= 0)
+    const int64_t read_start = rec->core.pos;
+    const int64_t read_end = bam_endpos(rec);
+    while (window_lo < window_hi && sites[window_lo].pos < read_start)
     {
-        if ((rec->core.flag & kSkipMask) != 0)
-        {
-            continue;
-        }
-        if (rec->core.qual < opts.min_mapq)
-        {
-            continue;
-        }
-        const int32_t qpos = ref_to_query_pos(rec, site.pos);
+        ++window_lo;
+    }
+    for (size_t s = window_lo;
+         s < window_hi && sites[s].pos < read_end;
+         ++s)
+    {
+        const int32_t qpos = ref_to_query_pos(rec, sites[s].pos);
         if (qpos < 0)
         {
             continue;
         }
-        const uint8_t baseq = bam_get_qual(rec)[qpos];
-        if (baseq < opts.min_baseq)
+        if (bam_get_qual(rec)[qpos] < opts.min_baseq)
         {
             continue;
         }
-        const uint8_t enc = bam_seqi(bam_get_seq(rec), qpos);
-        const char base = seq_nt16_str[enc];
-        if (base == ref_upper)
+        const char base = seq_nt16_str[bam_seqi(bam_get_seq(rec), qpos)];
+        if (base == to_upper(sites[s].ref))
         {
-            ++out.n_ref;
+            ++counts[s].n_ref;
         }
-        else if (base == alt_upper)
+        else if (base == to_upper(sites[s].alt))
         {
-            ++out.n_alt;
+            ++counts[s].n_alt;
         }
+    }
+}
+
+void scan_chrom(
+    htsFile* file,
+    hts_idx_t* idx,
+    int tid,
+    std::span<const Site> sites,
+    size_t chrom_lo,
+    size_t chrom_hi,
+    const PileupOptions& opts,
+    bam1_t* rec,
+    std::span<AlleleCount> counts)
+{
+    const int64_t lo = sites[chrom_lo].pos;
+    const int64_t hi = sites[chrom_hi - 1].pos + 1;
+    hts_itr_ptr it(sam_itr_queryi(idx, tid, lo, hi));
+    if (!it)
+    {
+        return;
+    }
+    size_t window_lo = chrom_lo;
+    while (sam_itr_next(file, it.get(), rec) >= 0)
+    {
+        tally_read(rec, sites, window_lo, chrom_hi, opts, counts);
     }
 }
 }  // namespace
@@ -137,22 +159,29 @@ std::vector<AlleleCount> count_alleles(
     bam1_ptr rec(bam_init1());
     std::vector<AlleleCount> counts(sites.size(), AlleleCount{0, 0});
 
-    std::string last_chrom;
-    int last_tid = -1;
-    for (size_t i = 0; i < sites.size(); ++i)
+    size_t i = 0;
+    while (i < sites.size())
     {
-        const Site& site = sites[i];
-        if (site.chrom != last_chrom)
+        size_t j = i + 1;
+        while (j < sites.size() && sites[j].chrom == sites[i].chrom)
         {
-            last_tid = sam_hdr_name2tid(hdr.get(), site.chrom.c_str());
-            last_chrom = site.chrom;
+            ++j;
         }
-        if (last_tid < 0)
+        const int tid = sam_hdr_name2tid(hdr.get(), sites[i].chrom.c_str());
+        if (tid >= 0)
         {
-            continue;
+            scan_chrom(
+                file.get(),
+                idx.get(),
+                tid,
+                sites,
+                i,
+                j,
+                opts,
+                rec.get(),
+                counts);
         }
-        count_site(
-            file.get(), idx.get(), last_tid, site, opts, rec.get(), counts[i]);
+        i = j;
     }
     return counts;
 }

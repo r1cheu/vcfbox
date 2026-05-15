@@ -86,7 +86,7 @@ void test_parentage(const ParentageTestOptions& options)
     out.write_line("sample\tmaternal\tpaternal\tloglik");
 
     size_t processed = 0;
-    auto counter = create_counter("Scoring BAMs", processed);
+    auto counter = create_counter("Scoring BAMs", processed, "bam/s");
     counter->show();
 
     for (const auto& bam_path : bam_paths)

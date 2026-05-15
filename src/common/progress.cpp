@@ -6,7 +6,8 @@ namespace vcfbox
 {
 std::shared_ptr<barkeep::CompositeDisplay> create_counter(
     const std::string& message,
-    size_t& progress_counters)
+    size_t& progress_counters,
+    const std::string& speed_unit)
 {
     auto anim = bk::Animation(
         {.style = bk::Strings{"|", "/", "-", "\\"},
@@ -18,7 +19,7 @@ std::shared_ptr<barkeep::CompositeDisplay> create_counter(
         {
             .message = message,
             .speed = 1.,
-            .speed_unit = "snp/s",
+            .speed_unit = speed_unit,
             .show = false,
         });
 

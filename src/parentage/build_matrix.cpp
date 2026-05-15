@@ -145,8 +145,6 @@ void append_homo_bits(
     std::vector<uint8_t>& ref_bits,
     std::vector<uint8_t>& alt_bits)
 {
-    ref_bits.reserve(ref_bits.size() + indices.size());
-    alt_bits.reserve(alt_bits.size() + indices.size());
     for (int idx : indices)
     {
         const auto bits
