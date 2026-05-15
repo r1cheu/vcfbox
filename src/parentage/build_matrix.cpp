@@ -162,13 +162,13 @@ namespace vcfbox
 {
 void build_parentage_matrices(const ParentageMatrixOptions& options)
 {
-    HtsFile vcf_file(bcf_open(options.parents_path.c_str(), "r"));
+    hts_file_ptr vcf_file(bcf_open(options.parents_path.c_str(), "r"));
     if (!vcf_file)
     {
         throw std::runtime_error(
             "Could not open VCF file: " + options.parents_path);
     }
-    BcfHdr header(bcf_hdr_read(vcf_file.get()));
+    bcf_hdr_ptr header(bcf_hdr_read(vcf_file.get()));
     if (!header)
     {
         throw std::runtime_error(
@@ -185,8 +185,8 @@ void build_parentage_matrices(const ParentageMatrixOptions& options)
 
     LineWriter bed(options.matrix_prefix + ".sites.bed");
 
-    BcfRec rec(bcf_init());
-    Genotypes gt;
+    bcf1_ptr rec(bcf_init());
+    genotype_buffer gt;
 
     size_t processed = 0;
     auto counter = create_counter("Indicating sites", processed);
@@ -204,7 +204,7 @@ void build_parentage_matrices(const ParentageMatrixOptions& options)
                 + std::to_string(rec->pos + 1)
                 + " (filter to bi-allelic before build-matrix)");
         }
-        if (bcf_get_genotypes(header.get(), rec.get(), &gt.p_, &gt.n_) <= 0)
+        if (read_genotypes(header.get(), rec.get(), gt) <= 0)
         {
             throw std::runtime_error(
                 "Missing GT field at "
@@ -212,7 +212,8 @@ void build_parentage_matrices(const ParentageMatrixOptions& options)
                 + std::to_string(rec->pos + 1));
         }
 
-        const std::span gt_span{gt.p_, static_cast<size_t>(gt.n_)};
+        const std::span gt_span{
+            gt.data.get(), static_cast<size_t>(gt.capacity)};
         append_homo_bits(gt_span, groups.maternal_idx, m0_bits, m1_bits);
         append_homo_bits(gt_span, groups.paternal_idx, p0_bits, p1_bits);
 

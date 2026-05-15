@@ -222,12 +222,12 @@ void combine_genotypes(
     bool keep_old_samples,
     const std::string& out_path)
 {
-    HtsFile vcf_file(bcf_open(vcf_path.c_str(), "r"));
+    hts_file_ptr vcf_file(bcf_open(vcf_path.c_str(), "r"));
     if (!vcf_file)
     {
         throw std::runtime_error("Could not open VCF file: " + vcf_path);
     }
-    BcfHdr header(bcf_hdr_read(vcf_file.get()));
+    bcf_hdr_ptr header(bcf_hdr_read(vcf_file.get()));
     if (!header)
     {
         throw std::runtime_error("Could not read VCF header from: " + vcf_path);
@@ -237,13 +237,13 @@ void combine_genotypes(
     check_pairs_in_header(sample_pairs, sample_to_idx);
 
     const auto mode = parse_mode(out_path);
-    HtsFile output_file(hts_open(out_path.c_str(), mode.c_str()));
+    hts_file_ptr output_file(hts_open(out_path.c_str(), mode.c_str()));
     if (!output_file)
     {
         throw std::runtime_error("Could not open output file: " + out_path);
     }
 
-    BcfHdr output_header(
+    bcf_hdr_ptr output_header(
         init_bcf_header(header.get(), sample_pairs, keep_old_samples));
 
     if (bcf_hdr_write(output_file.get(), output_header.get()) != 0)
@@ -251,9 +251,9 @@ void combine_genotypes(
         throw std::runtime_error("Failed to write output header");
     }
 
-    BcfRec in_rec(bcf_init());
-    BcfRec out_rec(bcf_init());
-    Genotypes gt;
+    bcf1_ptr in_rec(bcf_init());
+    bcf1_ptr out_rec(bcf_init());
+    genotype_buffer gt;
 
     size_t processed_snp = 0;
     auto counter = create_counter("Adding SNPs", processed_snp);
@@ -266,13 +266,17 @@ void combine_genotypes(
         {
             continue;
         }
-        if (bcf_get_genotypes(header.get(), in_rec.get(), &gt.p_, &gt.n_) <= 0)
+        if (read_genotypes(header.get(), in_rec.get(), gt) <= 0)
         {
             continue;
         }
 
         auto out_gts = concat_gt(
-            sample_pairs, sample_to_idx, gt.p_, keep_old_samples, gt.n_);
+            sample_pairs,
+            sample_to_idx,
+            gt.data.get(),
+            keep_old_samples,
+            gt.capacity);
         copy_rec_info(
             header.get(), output_header.get(), in_rec.get(), out_rec.get());
         bcf_update_genotypes(
