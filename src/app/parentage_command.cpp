@@ -56,8 +56,28 @@ ParentageCommands add_parentage_command(
         ->required();
     test
         ->add_option(
-            "-o,--output", test_options.output_path, "Path to output result")
+            "-o,--output",
+            test_options.output_path,
+            "Path to top-K result TSV")
         ->required();
+    test
+        ->add_option(
+            "-s,--summary",
+            test_options.summary_path,
+            "Path to per-sample summary TSV")
+        ->required();
+    test->add_option(
+        "--raw",
+        test_options.raw_path,
+        "Optional path to full K_m x K_p loglik TSV");
+    test->add_option(
+        "-k,--top-k",
+        test_options.top_k,
+        "Number of top candidate pairs per sample");
+    test->add_option(
+        "--threshold",
+        test_options.threshold,
+        "Posterior threshold for accept/partial/reject call");
     test->add_option(
         "-e,--error-rate",
         test_options.error_rate,

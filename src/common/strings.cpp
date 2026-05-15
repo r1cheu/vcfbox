@@ -1,5 +1,9 @@
 #include "common/strings.h"
 
+#include <array>
+#include <charconv>
+#include <stdexcept>
+
 namespace vcfbox
 {
 std::string join(std::span<const std::string> parts, std::string_view sep)
@@ -30,5 +34,21 @@ std::vector<std::string_view> split(std::string_view s, char delim)
         out.push_back(s.substr(0, pos));
         s.remove_prefix(pos + 1);
     }
+}
+
+std::string format_number(double value, int precision)
+{
+    std::array<char, 32> buf{};
+    const auto [ptr, ec] = std::to_chars(
+        buf.data(),
+        buf.data() + buf.size(),
+        value,
+        std::chars_format::general,
+        precision);
+    if (ec != std::errc{})
+    {
+        throw std::runtime_error("Failed to format number");
+    }
+    return std::string(buf.data(), ptr);
 }
 }  // namespace vcfbox

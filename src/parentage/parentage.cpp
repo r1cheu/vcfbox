@@ -2,22 +2,25 @@
 
 #include <Eigen/Core>
 #include <algorithm>
-#include <array>
 #include <atomic>
-#include <charconv>
 #include <cstddef>
 #include <filesystem>
+#include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "common/line_writer.h"
 #include "common/lines.h"
 #include "common/progress.h"
+#include "common/strings.h"
 #include "parentage/bitmatrix.h"
 #include "parentage/likelihood.h"
 #include "parentage/pileup.h"
+#include "parentage/report.h"
 #include "parentage/sites.h"
 
 namespace vcfbox
@@ -65,16 +68,111 @@ LoadedMatrices load_matrices(const std::string& prefix)
     return loaded;
 }
 
-std::string format_loglik(double ll)
+void write_top_k(
+    LineWriter& out,
+    const std::string& sample,
+    const SampleReport& report,
+    std::span<const std::string> maternal_names,
+    std::span<const std::string> paternal_names)
 {
-    std::array<char, 32> buf{};
-    const auto [ptr, ec] = std::to_chars(
-        buf.data(), buf.data() + buf.size(), ll, std::chars_format::general, 8);
-    if (ec != std::errc{})
+    const double best_ll = report.best.loglik;
+    for (size_t i = 0; i < report.top_k.size(); ++i)
     {
-        throw std::runtime_error("Failed to format loglik value");
+        const auto& cand = report.top_k[i];
+        out.write_fields(
+            sample,
+            i + 1,
+            maternal_names[cand.m],
+            paternal_names[cand.f],
+            format_number(cand.loglik, 8),
+            format_number(cand.posterior, 6),
+            format_number(cand.loglik - best_ll, 8));
     }
-    return std::string(buf.data(), ptr);
+}
+
+void write_summary_row(
+    LineWriter& out,
+    const std::string& sample,
+    const SampleReport& report,
+    std::span<const std::string> maternal_names,
+    std::span<const std::string> paternal_names,
+    double threshold)
+{
+    out.write_fields(
+        sample,
+        maternal_names[report.best.m],
+        paternal_names[report.best.f],
+        format_number(report.best.loglik, 8),
+        format_number(report.best.posterior, 6),
+        format_number(report.m_marg_post, 6),
+        format_number(report.f_marg_post, 6),
+        to_string(classify_call(report, threshold)));
+}
+
+void write_raw_block(
+    LineWriter& out,
+    const std::string& sample,
+    const Eigen::MatrixXd& ll,
+    std::span<const std::string> maternal_names,
+    std::span<const std::string> paternal_names)
+{
+    for (Eigen::Index r = 0; r < ll.rows(); ++r)
+    {
+        for (Eigen::Index c = 0; c < ll.cols(); ++c)
+        {
+            out.write_fields(
+                sample,
+                maternal_names[r],
+                paternal_names[c],
+                format_number(ll(r, c), 8));
+        }
+    }
+}
+
+void emit_reports(
+    const ParentageTestOptions& options,
+    std::span<const std::string> bam_paths,
+    const LoadedMatrices& loaded,
+    std::span<const SampleReport> reports,
+    std::span<const Eigen::MatrixXd> ll_per_bam)
+{
+    const bool emit_raw = !options.raw_path.empty();
+    const std::span<const std::string> mat_names = loaded.maternal_names;
+    const std::span<const std::string> pat_names = loaded.paternal_names;
+
+    LineWriter top(options.output_path);
+    top.write_fields(
+        "sample", "rank", "mother", "father",
+        "loglik", "posterior", "delta_best");
+    LineWriter summary(options.summary_path);
+    summary.write_fields(
+        "sample", "mother", "father", "loglik",
+        "pair_post", "m_marg_post", "f_marg_post", "call");
+    std::optional<LineWriter> raw;
+    if (emit_raw)
+    {
+        raw.emplace(options.raw_path);
+        raw->write_fields("sample", "mother", "father", "loglik");
+    }
+
+    for (size_t i = 0; i < bam_paths.size(); ++i)
+    {
+        const auto sample
+            = std::filesystem::path(bam_paths[i]).stem().string();
+        write_top_k(top, sample, reports[i], mat_names, pat_names);
+        write_summary_row(
+            summary,
+            sample,
+            reports[i],
+            mat_names,
+            pat_names,
+            options.threshold);
+        if (emit_raw)
+        {
+            write_raw_block(
+                *raw, sample, ll_per_bam[i], mat_names, pat_names);
+        }
+    }
 }
 }  // namespace
 
@@ -85,8 +183,14 @@ void test_parentage(const ParentageTestOptions& options)
 
     const PileupOptions pileup_opts{options.min_mapq, options.min_baseq};
     const int n_threads = std::max(1, options.threads);
+    const bool emit_raw = !options.raw_path.empty();
 
-    std::vector<Eigen::MatrixXd> ll_per_bam(bam_paths.size());
+    std::vector<Eigen::MatrixXd> ll_per_bam;
+    if (emit_raw)
+    {
+        ll_per_bam.resize(bam_paths.size());
+    }
+    std::vector<SampleReport> reports(bam_paths.size());
     std::atomic<size_t> next_bam{0};
     size_t processed = 0;
     auto counter = create_counter("Scoring BAMs", processed, "bam/s");
@@ -102,13 +206,18 @@ void test_parentage(const ParentageTestOptions& options)
             }
             const auto counts
                 = count_alleles(bam_paths[i], loaded.sites, pileup_opts);
-            ll_per_bam[i] = compute_pair_loglik(
+            auto ll = compute_pair_loglik(
                 counts,
                 loaded.m0,
                 loaded.m1,
                 loaded.p0,
                 loaded.p1,
                 options.error_rate);
+            reports[i] = build_report(ll, options.top_k);
+            if (emit_raw)
+            {
+                ll_per_bam[i] = std::move(ll);
+            }
             ++processed;
         }
     };
@@ -126,23 +235,6 @@ void test_parentage(const ParentageTestOptions& options)
     }
     counter->done();
 
-    LineWriter out(options.output_path);
-    out.write_line("sample\tmaternal\tpaternal\tloglik");
-    for (size_t i = 0; i < bam_paths.size(); ++i)
-    {
-        const auto sample
-            = std::filesystem::path(bam_paths[i]).stem().string();
-        const auto& ll = ll_per_bam[i];
-        for (Eigen::Index r = 0; r < ll.rows(); ++r)
-        {
-            for (Eigen::Index c = 0; c < ll.cols(); ++c)
-            {
-                out.write_line(
-                    sample + "\t" + loaded.maternal_names[r] + "\t"
-                    + loaded.paternal_names[c] + "\t"
-                    + format_loglik(ll(r, c)));
-            }
-        }
-    }
+    emit_reports(options, bam_paths, loaded, reports, ll_per_bam);
 }
 }  // namespace vcfbox

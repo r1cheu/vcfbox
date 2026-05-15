@@ -12,6 +12,7 @@ liblzma-static = ">=5.8.1,<6"
 cmake = ">=3.18,<4"
 cxx-compiler = ">=1.8.0,<2"
 ninja = ">=1.12.1,<2"
+openblas = ">=0.3.27,<1"
 
 [tasks.configure]
 cmd = ["cmake", "-GNinja", "-S .", "-B.build"]

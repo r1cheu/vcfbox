@@ -18,7 +18,11 @@ struct ParentageTestOptions
     std::string bam_list_path;
     std::string prefix;
     std::string output_path;
+    std::string summary_path;
+    std::string raw_path;
     double error_rate = 0.01;
+    double threshold = 0.99;
+    int top_k = 5;
     int min_mapq = 20;
     int min_baseq = 13;
     int threads = 1;
