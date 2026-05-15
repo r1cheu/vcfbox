@@ -31,6 +31,8 @@ add_executable(
   src/combine/combine_genotypes.cpp
   src/common/path.cpp
   src/common/progress.cpp
+  src/common/strings.cpp
+  src/parentage/build_matrix.cpp
   src/parentage/parentage.cpp)
 
 target_include_directories(

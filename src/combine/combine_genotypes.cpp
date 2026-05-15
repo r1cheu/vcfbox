@@ -11,6 +11,7 @@
 
 #include "common/path.h"
 #include "common/progress.h"
+#include "common/strings.h"
 #include "hts/hts_raii.h"
 
 extern "C"
@@ -54,17 +55,8 @@ void check_pairs_in_header(
     {
         return;
     }
-    std::string list;
-    for (size_t i = 0; i < missing.size(); ++i)
-    {
-        if (i != 0)
-        {
-            list += ", ";
-        }
-        list += missing[i];
-    }
     throw std::runtime_error(
-        "Samples not found in VCF: " + list
+        "Samples not found in VCF: " + vcfbox::join(missing, ", ")
         + ". Make sure sample list matches VCF file.");
 }
 
