@@ -1,147 +1,30 @@
-#include "utils.h"
+#include "commands/combine_genotypes.h"
 
+#include <cstddef>
+#include <cstdlib>
+#include <cstdint>
+#include <fstream>
 #include <set>
+#include <sstream>
+#include <stdexcept>
 #include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
 
-#include "barkeep.h"
-#include "vcf_raii.h"
+#include "common/progress.h"
+#include "hts/hts_raii.h"
 
 extern "C"
 {
 #include <htslib/vcf.h>
 }
-namespace bk = barkeep;
-namespace vcfbox
+
+namespace
 {
-std::string parse_mode(std::string_view file_path)
-{
-    auto ext = file_path.substr(file_path.find_last_of('.') + 1);
-    if (ext == "bam")
-    {
-        return "wb";
-    }
-    if (ext == "sam")
-    {
-        return "w";
-    }
-    if (ext == "cram")
-    {
-        return "wc";
-    }
-    if (ext == "bcf")
-    {
-        return "wb";
-    }
-    if (ext == "vcf")
-    {
-        return "w";
-    }
-    if (ext == "gz")
-    {
-        auto base = file_path.substr(0, file_path.find_last_of('.'));
-        auto base_ext = base.substr(base.find_last_of('.') + 1);
-        if (base_ext == "vcf")
-        {
-            return "wz";
-        }
-        if (base_ext == "bcf")
-        {
-            return "wb";
-        }
-    }
-    return "w";
-}
-
-size_t count_records(std::string_view vcf_path)
-{
-    size_t rec_count = 0;
-    auto counter = bk::Counter(
-        &rec_count,
-        {
-            .message = "Counting SNPs",
-            .speed = 1.,
-            .speed_unit = "snp/s",
-        });
-
-    HtsFile vcf_file(bcf_open(vcf_path.data(), "r"));
-    if (!vcf_file)
-    {
-        throw std::runtime_error(
-            "Could not open VCF file: " + std::string(vcf_path));
-    }
-    BcfHdr header(bcf_hdr_read(vcf_file.get()));
-    if (!header)
-    {
-        throw std::runtime_error(
-            "Could not read VCF header from: " + std::string(vcf_path));
-    }
-    BcfRec rec(bcf_init());
-    if (!rec)
-    {
-        throw std::runtime_error("Failed to initialize VCF record.");
-    }
-
-    while (bcf_read(vcf_file.get(), header.get(), rec.get()) == 0)
-    {
-        rec_count++;
-    }
-    return rec_count;
-}
-
-}  // namespace vcfbox
-
-namespace detail
-{
-namespace bk = barkeep;
-std::shared_ptr<barkeep::CompositeDisplay> create_progress(
-    size_t total,
-    size_t& progress_counters)
-{
-    auto anim = bk::Animation(
-        {.style = bk::Strings{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
-         .interval = 0.08,
-         .show = false});
-
-    bk::BarParts custom_bar_style;
-    custom_bar_style.left = "[";
-    custom_bar_style.right = "]";
-    custom_bar_style.fill = {"\033[1;33m━\033[0m"};
-    custom_bar_style.empty = {"─"};
-
-    auto pbar = bk::ProgressBar(
-        &progress_counters,
-        {.total = total,
-         .format = "Adding SNPs {bar} {value}/{total} ({speed:.1f}/s)",
-         .speed = 0.1,
-         .style = custom_bar_style,
-         .show = false});
-
-    return bk::Composite({anim, pbar}, " ");
-}
-
-std::shared_ptr<barkeep::CompositeDisplay> create_counter(
-    const std::string& message,
-    size_t& progress_counters)
-{
-    auto anim = bk::Animation(
-        {.style = bk::Strings{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
-         .interval = 0.08,
-         .show = false});
-
-    auto pbar = bk::Counter(
-        &progress_counters,
-        {
-            .message = message,
-            .speed = 1.,
-            .speed_unit = "snp/s",
-            .show = false,
-        });
-
-    return bk::Composite({anim, pbar}, " ");
-}
-void check_sample_consistence(
+void check_sample_consistency(
     std::string_view vcf_path,
-    const std::vector<SamplePair>& sample_pairs)
+    const std::vector<vcfbox::SamplePair>& sample_pairs)
 {
     HtsFile vcf_file(bcf_open(vcf_path.data(), "r"));
     if (!vcf_file)
@@ -185,9 +68,9 @@ void check_sample_consistence(
     if (!missing_samples.empty())
     {
         std::string missing_str;
-        for (const auto& s : missing_samples)
+        for (const auto& sample : missing_samples)
         {
-            missing_str += s + ", ";
+            missing_str += sample + ", ";
         }
         throw std::runtime_error(
             "Samples not found in VCF: " + missing_str
@@ -195,9 +78,9 @@ void check_sample_consistence(
     }
 }
 
-bcf_hdr_t* init_bcf_head(
+bcf_hdr_t* init_bcf_header(
     bcf_hdr_t* header,
-    const std::vector<SamplePair>& sample_pairs,
+    const std::vector<vcfbox::SamplePair>& sample_pairs,
     bool keep_old_samples)
 {
     bcf_hdr_t* output_header = bcf_hdr_init("w");
@@ -237,7 +120,7 @@ bcf_hdr_t* init_bcf_head(
             output_header, (pair.first + "~" + pair.second).c_str());
     }
 
-    bcf_hdr_add_sample(output_header, nullptr);  // 更新样本列表
+    bcf_hdr_add_sample(output_header, nullptr);
 
     return output_header;
 }
@@ -263,7 +146,7 @@ void copy_rec_info(
 }
 
 std::vector<int32_t> concat_gt(
-    const std::vector<std::pair<std::string, std::string>>& sample_pairs,
+    const std::vector<vcfbox::SamplePair>& sample_pairs,
     const std::unordered_map<std::string, int>& sample_to_idx,
     const int32_t* gt_arr,
     bool keep_old_samples,
@@ -320,5 +203,101 @@ std::vector<int32_t> concat_gt(
     }
     return out_gts;
 }
+}  // namespace
 
-}  // namespace detail
+namespace vcfbox
+{
+std::vector<SamplePair> parse_sample_pairs(const std::string& file_path)
+{
+    std::vector<SamplePair> pairs;
+    std::ifstream file(file_path);
+
+    if (!file)
+    {
+        throw std::runtime_error("Cannot open sample pairs file: " + file_path);
+    }
+    std::string line;
+    while (std::getline(file, line))
+    {
+        if (line.empty() || line[0] == '#')
+        {
+            continue;
+        }
+        std::istringstream iss(line);
+        std::string s1;
+        std::string s2;
+        if (iss >> s1 >> s2)
+        {
+            pairs.emplace_back(s1, s2);
+        }
+    }
+    return pairs;
+}
+
+void combine_genotypes(
+    const std::string& vcf_path,
+    const std::vector<SamplePair>& sample_pairs,
+    bool keep_old_samples,
+    const std::string& out_path,
+    const std::string& mode)
+{
+    check_sample_consistency(vcf_path, sample_pairs);
+
+    HtsFile vcf_file(bcf_open(vcf_path.c_str(), "r"));
+    BcfHdr header(bcf_hdr_read(vcf_file.get()));
+    std::unordered_map<std::string, int> sample_to_idx;
+    for (int i = 0; i < bcf_hdr_nsamples(header); ++i)
+    {
+        sample_to_idx[header->samples[i]] = i;
+    }
+
+    HtsFile output_file(hts_open(out_path.c_str(), mode.c_str()));
+    if (!output_file)
+    {
+        throw std::runtime_error("Could not open output file: " + out_path);
+    }
+
+    BcfHdr output_header(
+        init_bcf_header(header.get(), sample_pairs, keep_old_samples));
+
+    if (bcf_hdr_write(output_file.get(), output_header.get()) != 0)
+    {
+        throw std::runtime_error("Failed to write output header");
+    }
+
+    BcfRec in_rec(bcf_init());
+    BcfRec out_rec(bcf_init());
+    Genotypes gt;
+
+    size_t processed_snp = 0;
+    auto counter = create_counter("Adding SNPs", processed_snp);
+    counter->show();
+    while (bcf_read(vcf_file.get(), header.get(), in_rec.get()) == 0)
+    {
+        processed_snp++;
+        bcf_unpack(in_rec.get(), BCF_UN_ALL);
+        if (in_rec->n_allele > 2)
+        {
+            continue;
+        }
+        if (bcf_get_genotypes(header.get(), in_rec.get(), &gt.p_, &gt.n_) <= 0)
+        {
+            continue;
+        }
+
+        auto out_gts = concat_gt(
+            sample_pairs, sample_to_idx, gt.p_, keep_old_samples, gt.n_);
+        copy_rec_info(
+            header.get(), output_header.get(), in_rec.get(), out_rec.get());
+        bcf_update_genotypes(
+            output_header.get(), out_rec.get(), out_gts.data(), out_gts.size());
+
+        if (bcf_write(output_file.get(), output_header.get(), out_rec.get())
+            != 0)
+        {
+            throw std::runtime_error("Failed to write VCF record");
+        }
+    }
+    counter->done();
+}
+}  // namespace vcfbox

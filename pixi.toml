@@ -9,8 +9,6 @@ version = "0.1.0"
 [dependencies]
 htslib = ">=1.22,<2"
 liblzma-static = ">=5.8.1,<6"
-
-[build-dependencies]
 cmake = ">=3.18,<4"
 cxx-compiler = ">=1.8.0,<2"
 ninja = ">=1.12.1,<2"
@@ -23,5 +21,11 @@ outputs = [".build/CMakeFiles"]
 [tasks.build]
 cmd = ["cmake", "--build", ".build"]
 depends-on = ["configure"]
-inputs = ["CMakeLists.txt", "main.cpp"]
+inputs = [
+  "CMakeLists.txt",
+  "src/**/*.cpp",
+  "src/**/*.h",
+  "src/**/*.hpp",
+  "ext/barkeep/*.h",
+]
 outputs = [".build/vcfbox"]

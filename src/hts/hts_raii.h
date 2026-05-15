@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdlib>
 #include <memory>
 extern "C"
 {
@@ -49,10 +50,9 @@ class Genotypes
     {
         if (p_ != nullptr)
         {
-            free(p_);
+            std::free(p_);
         }
     }
-    // 禁止拷贝，允许移动
     Genotypes() = default;
     Genotypes(const Genotypes&) = delete;
     Genotypes& operator=(const Genotypes&) = delete;
