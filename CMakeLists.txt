@@ -35,7 +35,8 @@ add_executable(
   src/common/strings.cpp
   src/parentage/bitmatrix.cpp
   src/parentage/build_matrix.cpp
-  src/parentage/parentage.cpp)
+  src/parentage/parentage.cpp
+  src/parentage/sites.cpp)
 
 target_include_directories(
   vcfbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${HTSLIB_ROOT}/include)
