@@ -51,7 +51,7 @@ void write_bitmatrix(
     }
 }
 
-Eigen::MatrixXf load_bitmatrix(const std::string& path)
+Eigen::MatrixXd load_bitmatrix(const std::string& path)
 {
     std::ifstream in(path, std::ios::binary);
     if (!in)
@@ -75,7 +75,7 @@ Eigen::MatrixXf load_bitmatrix(const std::string& path)
         throw std::runtime_error("Bad bitmatrix header in: " + path);
     }
 
-    Eigen::MatrixXf mat(
+    Eigen::MatrixXd mat(
         static_cast<Eigen::Index>(rows), static_cast<Eigen::Index>(cols));
     const uint64_t stride = (rows + 7) / 8;
     std::vector<uint8_t> col_bytes(stride);
@@ -93,7 +93,7 @@ Eigen::MatrixXf load_bitmatrix(const std::string& path)
             const uint32_t byte = col_bytes[row / 8];
             const uint32_t bit = (byte >> (row % 8)) & 1U;
             mat(static_cast<Eigen::Index>(row), static_cast<Eigen::Index>(col))
-                = static_cast<float>(bit);
+                = static_cast<double>(bit);
         }
     }
     return mat;

@@ -59,6 +59,14 @@ ParentageCommands add_parentage_command(
         ->add_option(
             "-o,--output", test_options.output_path, "Path to output result")
         ->required();
+    test->add_option(
+        "--error-rate",
+        test_options.error_rate,
+        "Per-base sequencing error rate");
+    test->add_option(
+        "--min-mapq", test_options.min_mapq, "Minimum read mapping quality");
+    test->add_option(
+        "--min-baseq", test_options.min_baseq, "Minimum base quality");
 
     return {parentage, build_matrix, test};
 }

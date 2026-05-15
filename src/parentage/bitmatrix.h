@@ -17,6 +17,6 @@ void write_bitmatrix(
     uint64_t rows,
     uint64_t cols);
 
-Eigen::MatrixXf load_bitmatrix(const std::string& path);
+Eigen::MatrixXd load_bitmatrix(const std::string& path);
 
 }  // namespace vcfbox

@@ -18,6 +18,9 @@ struct ParentageTestOptions
     std::string bam_list_path;
     std::string matrix_prefix;
     std::string output_path;
+    double error_rate = 0.01;
+    int min_mapq = 20;
+    int min_baseq = 13;
 };
 
 void build_parentage_matrices(const ParentageMatrixOptions& options);
