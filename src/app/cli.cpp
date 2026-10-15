@@ -34,8 +34,10 @@ int run_cli(int argc, char** argv)
     app.require_subcommand(1);
 
     CombineOptions combine_options;
+    ParentageOptions parentage_options;
 
     auto* combine_command = add_combine_command(app, combine_options);
+    auto* parentage_command = add_parentage_command(app, parentage_options);
 
     try
     {
@@ -49,6 +51,10 @@ int run_cli(int argc, char** argv)
     if (*combine_command)
     {
         return run_command([&] { run_combine_command(combine_options); });
+    }
+    if (*parentage_command)
+    {
+        return run_command([&] { run_parentage_command(parentage_options); });
     }
 
     return 0;

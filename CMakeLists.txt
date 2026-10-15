@@ -22,12 +22,13 @@ add_library(barkeep INTERFACE)
 target_include_directories(
   barkeep INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/ext/barkeep)
 
-add_executable(
-  vcfbox
-  src/main.cpp
-  src/app/combine_command.cpp
-  src/app/cli.cpp
+# Business logic without CLI wiring; shared by the binary and the tests.
+add_library(
+  vcfbox_core STATIC
   src/combine/combine_genotypes.cpp
+  src/parentage/panel.cpp
+  src/parentage/parentage.cpp
+  src/parentage/sites.cpp
   src/common/line_writer.cpp
   src/common/lines.cpp
   src/common/path.cpp
@@ -35,6 +36,15 @@ add_executable(
   src/common/strings.cpp)
 
 target_include_directories(
-  vcfbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${HTSLIB_ROOT}/include)
-target_link_libraries(vcfbox PRIVATE ${HTSLIB_ROOT}/lib/libhts.so
-                                     Threads::Threads CLI11::CLI11 barkeep)
+  vcfbox_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${HTSLIB_ROOT}/include)
+target_link_libraries(vcfbox_core PUBLIC ${HTSLIB_ROOT}/lib/libhts.so
+                                         Threads::Threads barkeep)
+
+add_executable(
+  vcfbox src/main.cpp src/app/combine_command.cpp
+         src/app/parentage_command.cpp src/app/cli.cpp)
+
+target_link_libraries(vcfbox PRIVATE vcfbox_core CLI11::CLI11)
+
+enable_testing()
+add_subdirectory(tests)

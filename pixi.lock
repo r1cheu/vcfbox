@@ -21,6 +21,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/bzip2-1.0.8-hda65f42_9.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/c-ares-1.34.6-hb03c661_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/c-compiler-1.11.0-h4d9bdce_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/catch2-3.16.1-h4dbf13b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/cli11-2.7.2-h54a6638_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/cmake-3.31.8-hc85cc9f_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/cxx-compiler-1.11.0-hfcd1e18_0.conda
@@ -150,6 +151,19 @@ packages:
   license_family: BSD
   size: 6693
   timestamp: 1753098721814
+- conda: https://conda.anaconda.org/conda-forge/linux-64/catch2-3.16.1-h4dbf13b_0.conda
+  sha256: b944bef416ce510cf0d6782e0a4f0aacd25a2c2f8e36baf276eadc0701c46376
+  md5: 448b8cd3cf52aefc044be995ea270605
+  depends:
+  - libstdcxx >=15
+  - libgcc >=15
+  - __glibc >=2.17,<3.0.a0
+  license: BSL-1.0
+  run_exports:
+    weak:
+    - catch2 >=3.16.1,<4.0a0
+  size: 675208
+  timestamp: 1791497297484
 - conda: https://conda.anaconda.org/conda-forge/linux-64/cli11-2.7.2-h54a6638_1.conda
   sha256: 0520c8c4c7746e80ec53972a363e74cfc10914e0026432b32eb2ddf19f7c7ae8
   md5: 42761b55062088f6f7fb58d0633e0769

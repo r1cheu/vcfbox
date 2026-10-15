@@ -2,7 +2,6 @@
 
 #include <string>
 
-
 namespace CLI
 {
 class App;
@@ -20,4 +19,14 @@ struct CombineOptions
 
 CLI::App* add_combine_command(CLI::App& app, CombineOptions& options);
 void run_combine_command(const CombineOptions& options);
+
+struct ParentageOptions
+{
+    std::string vcf_path;
+    std::string exclude_sites_path;
+    double duplicate_max_discordance = 0.001;
+};
+
+CLI::App* add_parentage_command(CLI::App& app, ParentageOptions& options);
+void run_parentage_command(const ParentageOptions& options);
 }  // namespace vcfbox
