@@ -34,6 +34,7 @@ struct ParentageOptions
     double error_rate = 0.01;
     size_t top = 10;
     size_t candidates = 20;
+    size_t threads = 1;
 };
 
 CLI::App* add_parentage_command(CLI::App& app, ParentageOptions& options);

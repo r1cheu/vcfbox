@@ -64,6 +64,9 @@ auto add_parentage_command(CLI::App& app, ParentageOptions& options)
             "Parents with the best single-parent lod among which pairs are "
             "formed; 0 pairs every parent")
         ->capture_default_str();
+    command
+        ->add_option("--threads", options.threads, "Samples processed at once")
+        ->capture_default_str();
 
     return command;
 }
@@ -82,6 +85,7 @@ auto run_parentage_command(const ParentageOptions& options) -> void
     run_options.error_rate = options.error_rate;
     run_options.top = options.top;
     run_options.candidates = options.candidates;
+    run_options.threads = options.threads;
     parentage::run(run_options);
 }
 }  // namespace vcfbox

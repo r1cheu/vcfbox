@@ -28,7 +28,7 @@ htslib/CLI11/Catch2/cmake/ninja/compiler come from `.pixi/envs/default` — alwa
 Single binary with subcommands:
 
 - `combine` — implemented; merges paired samples into pseudo-homozygous samples named `A~B`.
-- `parentage` — being rewritten; `docs/parentage_design.md` is the design (purpose, data structures, plan), `docs/parentage_review.md` is the review of the old module. Implemented and tested so far: panel loading (`src/parentage/{bitrows.h,sites,panel}`), pileup + counts files (`src/parentage/{counts,pileup,counts_io}`) and scoring (`src/parentage/score`: single-parent model first, integer pair kernel over the `--candidates` best single parents, float stats of the top pairs); `parentage.cpp` runs them in order and prints scores to stderr until the report stage exists.
+- `parentage` — being rewritten; `docs/parentage_design.md` is the design (purpose, data structures, plan), `docs/parentage_review.md` is the review of the old module. Implemented and tested so far: panel loading (`src/parentage/{bitrows.h,sites,panel}`), pileup + counts files (`src/parentage/{counts,pileup,counts_io}`) and scoring (`src/parentage/score`: single-parent model first, integer pair kernel over the `--candidates` best single parents, float stats of the top pairs); `parentage.cpp` runs them per sample on a `--threads` worker pool and prints scores to stderr until the report stage exists.
 
 ## Naming
 

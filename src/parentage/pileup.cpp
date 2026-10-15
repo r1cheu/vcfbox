@@ -231,7 +231,10 @@ auto pileup_bam(
     size_t processed = 0;
     auto counter
         = create_counter(std::format("Pileup {}", sample), processed, "read/s");
-    counter->show();
+    if (options.progress)
+    {
+        counter->show();
+    }
 
     ReadSource src;
     src.file = file.get();
@@ -288,7 +291,10 @@ auto pileup_bam(
     {
         std::rethrow_exception(src.error);
     }
-    counter->done();
+    if (options.progress)
+    {
+        counter->done();
+    }
     return counts;
 }
 }  // namespace vcfbox::parentage

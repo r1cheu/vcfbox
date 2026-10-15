@@ -19,6 +19,7 @@ struct RunOptions
     double error_rate = 0.01;
     size_t top = 10;         // pairs printed per sample
     size_t candidates = 20;  // parents paired, by single-parent lod; 0 = all
+    size_t threads = 1;      // samples processed at once
 };
 
 struct BamEntry

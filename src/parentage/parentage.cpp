@@ -1,12 +1,17 @@
 #include "parentage/parentage.h"
 
+#include <atomic>
+#include <exception>
 #include <filesystem>
 #include <format>
 #include <iostream>
+#include <mutex>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "common/lines.h"
@@ -46,6 +51,13 @@ auto print_panel_summary(const Panel& panel) -> void
             panel.n_sites());
     }
 }
+
+// Counts of one sample and where they came from.
+struct ObtainedCounts
+{
+    SampleCounts counts;
+    std::string origin;  // "pileup" or "counts file"
+};
 
 auto print_sample_summary(const SampleCounts& counts, const std::string& origin)
     -> void
@@ -128,29 +140,75 @@ auto obtain_counts(
     const BamEntry& bam,
     const SiteTable& sites,
     const RunOptions& options,
-    const PileupOptions& pileup_options) -> SampleCounts
+    const PileupOptions& pileup_options) -> ObtainedCounts
 {
     if (options.counts_dir.empty())
     {
-        SampleCounts counts
-            = pileup_bam(bam.path, bam.sample, sites, pileup_options);
-        print_sample_summary(counts, "pileup");
-        return counts;
+        return {
+            pileup_bam(bam.path, bam.sample, sites, pileup_options), "pileup"};
     }
-    fs::create_directories(options.counts_dir);
     const fs::path file = fs::path(options.counts_dir)
                           / std::format("{}.counts.gz", bam.sample);
     if (fs::exists(file))
     {
-        SampleCounts counts = read_counts(file.string(), sites.size());
-        print_sample_summary(counts, "counts file");
-        return counts;
+        return {read_counts(file.string(), sites.size()), "counts file"};
     }
     SampleCounts counts
         = pileup_bam(bam.path, bam.sample, sites, pileup_options);
     write_counts(counts, file.string());
-    print_sample_summary(counts, "pileup");
-    return counts;
+    return {std::move(counts), "pileup"};
+}
+
+// Processes the samples on `options.threads` workers, each taking the next
+// unprocessed sample. The first exception thrown by a worker stops the
+// others after their current sample and is rethrown here.
+auto process_samples(
+    const Panel& panel,
+    std::span<const BamEntry> bams,
+    const RunOptions& options,
+    const PileupOptions& pileup_options,
+    const ScoreOptions& score_options) -> void
+{
+    std::atomic<size_t> next = 0;
+    std::atomic<bool> failed = false;
+    std::mutex output_mutex;
+    std::vector<std::exception_ptr> errors(options.threads);
+    const auto worker = [&](size_t thread)
+    {
+        try
+        {
+            for (size_t i = next++; i < bams.size() && !failed; i = next++)
+            {
+                const ObtainedCounts obtained = obtain_counts(
+                    bams[i], panel.sites(), options, pileup_options);
+                const SampleScores scores
+                    = score_sample(panel, obtained.counts, score_options);
+                const std::lock_guard lock(output_mutex);
+                print_sample_summary(obtained.counts, obtained.origin);
+                print_scores(panel, bams[i].sample, scores);
+            }
+        }
+        catch (...)
+        {
+            errors[thread] = std::current_exception();
+            failed = true;
+        }
+    };
+    {
+        std::vector<std::jthread> workers;
+        workers.reserve(options.threads);
+        for (size_t t = 0; t < options.threads; ++t)
+        {
+            workers.emplace_back(worker, t);
+        }
+    }
+    for (const std::exception_ptr& error : errors)
+    {
+        if (error)
+        {
+            std::rethrow_exception(error);
+        }
+    }
 }
 }  // namespace
 
@@ -212,21 +270,24 @@ auto run(const RunOptions& options) -> void
     {
         throw std::runtime_error("--top must be at least 1");
     }
+    if (options.threads == 0)
+    {
+        throw std::runtime_error("--threads must be at least 1");
+    }
     const std::vector<BamEntry> bams = read_bam_list(options.bams_path);
+    if (!options.counts_dir.empty())
+    {
+        fs::create_directories(options.counts_dir);
+    }
     PileupOptions pileup_options;
     pileup_options.min_mapq = options.min_mapq;
     pileup_options.min_baseq = options.min_baseq;
     pileup_options.dedup_overlaps = !options.keep_overlaps;
+    pileup_options.progress = options.threads == 1;
     ScoreOptions score_options;
     score_options.error_rate = options.error_rate;
     score_options.top = options.top;
     score_options.candidates = options.candidates;
-    for (const auto& bam : bams)
-    {
-        const SampleCounts counts
-            = obtain_counts(bam, panel.sites(), options, pileup_options);
-        print_scores(
-            panel, bam.sample, score_sample(panel, counts, score_options));
-    }
+    process_samples(panel, bams, options, pileup_options, score_options);
 }
 }  // namespace vcfbox::parentage
