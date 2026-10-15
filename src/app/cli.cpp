@@ -34,12 +34,8 @@ int run_cli(int argc, char** argv)
     app.require_subcommand(1);
 
     CombineOptions combine_options;
-    ParentageMatrixOptions parentage_matrix_options;
-    ParentageTestOptions parentage_test_options;
 
     auto* combine_command = add_combine_command(app, combine_options);
-    auto parentage = add_parentage_command(
-        app, parentage_matrix_options, parentage_test_options);
 
     try
     {
@@ -53,16 +49,6 @@ int run_cli(int argc, char** argv)
     if (*combine_command)
     {
         return run_command([&] { run_combine_command(combine_options); });
-    }
-    if (*parentage.build_matrix)
-    {
-        return run_command(
-            [&] { build_parentage_matrices(parentage_matrix_options); });
-    }
-    if (*parentage.test)
-    {
-        return run_command(
-            [&] { test_parentage(parentage_test_options); });
     }
 
     return 0;

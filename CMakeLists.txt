@@ -15,11 +15,8 @@ link_directories(${HTSLIB_ROOT}/lib)
 list(APPEND CMAKE_PREFIX_PATH ${HTSLIB_ROOT})
 
 find_package(Threads REQUIRED)
-set(BLA_VENDOR OpenBLAS)
-find_package(BLAS REQUIRED)
 
 find_package(CLI11 CONFIG REQUIRED)
-find_package(Eigen3 CONFIG REQUIRED)
 
 add_library(barkeep INTERFACE)
 target_include_directories(
@@ -30,25 +27,14 @@ add_executable(
   src/main.cpp
   src/app/combine_command.cpp
   src/app/cli.cpp
-  src/app/parentage_command.cpp
   src/combine/combine_genotypes.cpp
   src/common/line_writer.cpp
   src/common/lines.cpp
   src/common/path.cpp
   src/common/progress.cpp
-  src/common/strings.cpp
-  src/parentage/bitmatrix.cpp
-  src/parentage/build_matrix.cpp
-  src/parentage/likelihood.cpp
-  src/parentage/parentage.cpp
-  src/parentage/pileup.cpp
-  src/parentage/report.cpp
-  src/parentage/sites.cpp)
+  src/common/strings.cpp)
 
 target_include_directories(
   vcfbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${HTSLIB_ROOT}/include)
-target_compile_definitions(vcfbox PRIVATE EIGEN_USE_BLAS)
 target_link_libraries(vcfbox PRIVATE ${HTSLIB_ROOT}/lib/libhts.so
-                                     BLAS::BLAS
-                                     Threads::Threads CLI11::CLI11
-                                     Eigen3::Eigen barkeep)
+                                     Threads::Threads CLI11::CLI11 barkeep)
