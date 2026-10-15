@@ -2,8 +2,10 @@
 
 #include <cstdlib>
 #include <memory>
+#include <type_traits>
 extern "C"
 {
+#include <htslib/bgzf.h>
 #include <htslib/hts.h>
 #include <htslib/sam.h>
 #include <htslib/vcf.h>
@@ -86,6 +88,28 @@ struct bam1_deleter
     }
 };
 
+struct bam_mplp_deleter
+{
+    void operator()(bam_mplp_t p) const
+    {
+        if (p != nullptr)
+        {
+            bam_mplp_destroy(p);
+        }
+    }
+};
+
+struct bgzf_deleter
+{
+    void operator()(BGZF* p) const
+    {
+        if (p != nullptr)
+        {
+            bgzf_close(p);
+        }
+    }
+};
+
 struct hts_free_deleter
 {
     void operator()(void* p) const { std::free(p); }
@@ -98,6 +122,9 @@ using bcf_hdr_ptr = std::unique_ptr<bcf_hdr_t, bcf_hdr_deleter>;
 using bcf1_ptr = std::unique_ptr<bcf1_t, bcf1_deleter>;
 using sam_hdr_ptr = std::unique_ptr<sam_hdr_t, sam_hdr_deleter>;
 using bam1_ptr = std::unique_ptr<bam1_t, bam1_deleter>;
+using bgzf_ptr = std::unique_ptr<BGZF, bgzf_deleter>;
+using bam_mplp_ptr
+    = std::unique_ptr<std::remove_pointer_t<bam_mplp_t>, bam_mplp_deleter>;
 
 struct genotype_buffer
 {
@@ -105,8 +132,8 @@ struct genotype_buffer
     int capacity = 0;
 };
 
-inline int read_genotypes(
-    const bcf_hdr_t* hdr, bcf1_t* rec, genotype_buffer& buf)
+inline int
+read_genotypes(const bcf_hdr_t* hdr, bcf1_t* rec, genotype_buffer& buf)
 {
     int32_t* raw = buf.data.release();
     const int ret = bcf_get_genotypes(hdr, rec, &raw, &buf.capacity);

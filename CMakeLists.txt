@@ -26,8 +26,11 @@ target_include_directories(
 add_library(
   vcfbox_core STATIC
   src/combine/combine_genotypes.cpp
+  src/parentage/counts.cpp
+  src/parentage/counts_io.cpp
   src/parentage/panel.cpp
   src/parentage/parentage.cpp
+  src/parentage/pileup.cpp
   src/parentage/sites.cpp
   src/common/line_writer.cpp
   src/common/lines.cpp

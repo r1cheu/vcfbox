@@ -1,7 +1,7 @@
 find_package(Catch2 3 CONFIG REQUIRED)
 
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS "test_*.cpp")
-list(APPEND TEST_SOURCES file_fixture.cpp vcf_fixture.cpp)
+list(APPEND TEST_SOURCES file_fixture.cpp sam_fixture.cpp vcf_fixture.cpp)
 
 add_executable(vcfbox_tests ${TEST_SOURCES})
 

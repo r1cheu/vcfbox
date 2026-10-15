@@ -13,7 +13,7 @@ htslib/CLI11/Catch2/cmake/ninja/compiler come from `.pixi/envs/default` — alwa
 
 ## Tests
 
-- Layout mirrors `src/`: `tests/parentage/test_panel.cpp` tests `src/parentage/panel.*`. Shared helpers live in `tests/` (`file_fixture.h` for a temp dir, `vcf_fixture.h` for literal VCF text).
+- Layout mirrors `src/`: `tests/parentage/test_panel.cpp` tests `src/parentage/panel.*`. Shared helpers live in `tests/` (`file_fixture.h` for a temp dir, `vcf_fixture.h` / `sam_fixture.h` for literal VCF / SAM text; htslib reads plain `.vcf` / `.sam`, so no binary fixtures).
 - One behavior per `TEST_CASE`/`SECTION`, named after the action and expected outcome, laid out as given/when/then.
 - Cases of the same behavior (e.g. different boundaries of one rule) are `SECTION`s of one `TEST_CASE`, not separate `TEST_CASE`s.
 - Test through the public API and assert on results, not on calls made. A test changes only when behavior changes. Use real objects; no mocks.
@@ -28,7 +28,7 @@ htslib/CLI11/Catch2/cmake/ninja/compiler come from `.pixi/envs/default` — alwa
 Single binary with subcommands:
 
 - `combine` — implemented; merges paired samples into pseudo-homozygous samples named `A~B`.
-- `parentage` — being rewritten; `docs/parentage_design.md` is the design (purpose, data structures, plan), `docs/parentage_review.md` is the review of the old module. Currently only panel loading (`src/parentage/{bitrows.h,sites,panel,parentage}`) is implemented and tested.
+- `parentage` — being rewritten; `docs/parentage_design.md` is the design (purpose, data structures, plan), `docs/parentage_review.md` is the review of the old module. Implemented and tested so far: panel loading (`src/parentage/{bitrows.h,sites,panel}`) and pileup + counts files (`src/parentage/{counts,pileup,counts_io}`); `parentage.cpp` runs them in order.
 
 ## Naming
 
@@ -78,6 +78,8 @@ Single binary with subcommands:
 - Samples are F1s; mother/father are symmetric, unordered pairs, diagonal = selfing.
 - Real panel is ~3M sites; `data/panel_filled.vcf.gz` is a 47k-site fixture made by `bcftools +setGT ... -t . -n c:'0/0'` (its 202-site 080/111 difference is a fill artefact).
 - Scoring is integer: 1-bit panel rows, AND/XOR + popcount over count bit-planes; no BLAS/gemm.
+- Pileup runs on htslib's `bam_mplp_*` engine (what samtools mpileup uses) with samtools' read filters, so `samtools mpileup -B -q 20 -Q 20 --ff UNMAP,SECONDARY,QCFAIL,DUP,SUPPLEMENTARY` matches `vcfbox parentage` exactly per site, and `-x` matches `--keep-overlaps`. Non-proper pairs are dropped (samtools default). Only deliberate difference: MAPQ 255 is dropped (samtools keeps it); these BAMs have none.
+- `data/SH12277.bam` (1.1 GB) + `data/SH17265.bam` (1.8 GB) pile up in ~39 s single-threaded against the 47k fixture (a hand-written CIGAR walk was 3x faster but not bit-identical to samtools; rejected).
 
 ## Architecture
 

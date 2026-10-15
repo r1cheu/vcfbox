@@ -25,6 +25,11 @@ struct ParentageOptions
     std::string vcf_path;
     std::string exclude_sites_path;
     double duplicate_max_discordance = 0.001;
+    std::string bams_path;
+    std::string counts_dir;
+    int min_mapq = 20;
+    int min_baseq = 20;
+    bool keep_overlaps = false;
 };
 
 CLI::App* add_parentage_command(CLI::App& app, ParentageOptions& options);
