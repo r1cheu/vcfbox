@@ -3,7 +3,8 @@
 #include "parentage/bitrows.h"
 
 using vcfbox::parentage::BitRows;
-using vcfbox::parentage::popcount_xor;
+using vcfbox::parentage::popcount_discordant;
+using vcfbox::parentage::popcount_rows;
 
 TEST_CASE(
     "BitRows rounds the row width up to whole words",
@@ -45,15 +46,45 @@ TEST_CASE("BitRows set and get address a single bit", "[parentage][bitrows]")
 }
 
 TEST_CASE(
-    "popcount_xor counts differing bits across all words",
+    "popcount_rows counts set bits across all words",
     "[parentage][bitrows]")
 {
-    BitRows rows(2, 128);
+    BitRows rows(1, 128);
     rows.set(0, 0);
     rows.set(0, 64);
-    rows.set(1, 64);
-    rows.set(1, 127);
+    rows.set(0, 127);
 
-    REQUIRE(popcount_xor(rows.row(0), rows.row(1)) == 2);
-    REQUIRE(popcount_xor(rows.row(0), rows.row(0)) == 0);
+    REQUIRE(popcount_rows(rows.row(0)) == 3);
+}
+
+TEST_CASE(
+    "popcount_discordant counts differing bits outside heterozygous sites",
+    "[parentage][bitrows]")
+{
+    BitRows geno(2, 128);
+    geno.set(0, 0);
+    geno.set(0, 64);
+    geno.set(1, 64);
+    geno.set(1, 127);
+    BitRows het(2, 128);
+
+    SECTION("no heterozygous sites")
+    {
+        REQUIRE(
+            popcount_discordant(
+                geno.row(0), geno.row(1), het.row(0), het.row(1))
+            == 2);
+        REQUIRE(
+            popcount_discordant(
+                geno.row(0), geno.row(0), het.row(0), het.row(0))
+            == 0);
+    }
+    SECTION("a heterozygous site of either parent is not compared")
+    {
+        het.set(1, 0);
+        REQUIRE(
+            popcount_discordant(
+                geno.row(0), geno.row(1), het.row(0), het.row(1))
+            == 1);
+    }
 }

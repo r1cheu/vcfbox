@@ -48,6 +48,22 @@ auto add_parentage_command(CLI::App& app, ParentageOptions& options)
         "--keep-overlaps",
         options.keep_overlaps,
         "Count both mates of a pair at a site they both cover");
+    command
+        ->add_option(
+            "--error-rate",
+            options.error_rate,
+            "Per-read probability of observing the wrong allele")
+        ->capture_default_str();
+    command
+        ->add_option("--top", options.top, "Parent pairs reported per sample")
+        ->capture_default_str();
+    command
+        ->add_option(
+            "--candidates",
+            options.candidates,
+            "Parents with the best single-parent lod among which pairs are "
+            "formed; 0 pairs every parent")
+        ->capture_default_str();
 
     return command;
 }
@@ -63,6 +79,9 @@ auto run_parentage_command(const ParentageOptions& options) -> void
     run_options.min_mapq = options.min_mapq;
     run_options.min_baseq = options.min_baseq;
     run_options.keep_overlaps = options.keep_overlaps;
+    run_options.error_rate = options.error_rate;
+    run_options.top = options.top;
+    run_options.candidates = options.candidates;
     parentage::run(run_options);
 }
 }  // namespace vcfbox

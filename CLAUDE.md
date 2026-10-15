@@ -28,7 +28,7 @@ htslib/CLI11/Catch2/cmake/ninja/compiler come from `.pixi/envs/default` — alwa
 Single binary with subcommands:
 
 - `combine` — implemented; merges paired samples into pseudo-homozygous samples named `A~B`.
-- `parentage` — being rewritten; `docs/parentage_design.md` is the design (purpose, data structures, plan), `docs/parentage_review.md` is the review of the old module. Implemented and tested so far: panel loading (`src/parentage/{bitrows.h,sites,panel}`) and pileup + counts files (`src/parentage/{counts,pileup,counts_io}`); `parentage.cpp` runs them in order.
+- `parentage` — being rewritten; `docs/parentage_design.md` is the design (purpose, data structures, plan), `docs/parentage_review.md` is the review of the old module. Implemented and tested so far: panel loading (`src/parentage/{bitrows.h,sites,panel}`), pileup + counts files (`src/parentage/{counts,pileup,counts_io}`) and scoring (`src/parentage/score`: single-parent model first, integer pair kernel over the `--candidates` best single parents, float stats of the top pairs); `parentage.cpp` runs them in order and prints scores to stderr until the report stage exists.
 
 ## Naming
 
@@ -74,10 +74,11 @@ Single binary with subcommands:
 
 ## Parentage data facts (don't re-derive)
 
-- Parents are homozygous inbred lines; the panel is high quality, imputed, hets dropped: every GT is `0/0` or `1/1`. Missing/het/haploid/multi-allelic in the panel is an error, not something to model.
+- Parents are inbred lines with residual heterozygosity in chromosome blocks (real panel: 0.26% of GTs het, median parent 0.15%, max 3.3%; 40% of sites have some het parent). `Panel` carries a `het` bit plane; het sites contribute nothing to the integer ranking and are marginalised exactly in the float stage. Missing/haploid/multi-allelic in the panel is an error.
+- Real panel: `data/f0.02/parents.len.bcf` (3.17M sites, 307 parents; from gpu:~/project/imputation_bench/panel/f0.02, concatenated and reheadered with contig lengths from the BAM). `sites.chrNN.tsv` there holds the per-site opposite-read fraction from clean samples.
 - Samples are F1s; mother/father are symmetric, unordered pairs, diagonal = selfing.
 - Real panel is ~3M sites; `data/panel_filled.vcf.gz` is a 47k-site fixture made by `bcftools +setGT ... -t . -n c:'0/0'` (its 202-site 080/111 difference is a fill artefact).
-- Scoring is integer: 1-bit panel rows, AND/XOR + popcount over count bit-planes; no BLAS/gemm.
+- Scoring is integer: 1-bit panel rows, AND/XOR + popcount over count bit-planes; no BLAS/gemm. Oracle: numpy float matrix products over the `bcftools query` genotype matrix agree on every count, score and LOD for both samples. On the 47k fixture the true pair of SH12277 shows hom_mismatch 0.038 (0.023 on sites both parents had called in `data/sites.parentage.vcf.gz`, 0.38 on `setGT`-filled sites); calibrate verdict thresholds on the real panel, not this fixture.
 - Pileup runs on htslib's `bam_mplp_*` engine (what samtools mpileup uses) with samtools' read filters, so `samtools mpileup -B -q 20 -Q 20 --ff UNMAP,SECONDARY,QCFAIL,DUP,SUPPLEMENTARY` matches `vcfbox parentage` exactly per site, and `-x` matches `--keep-overlaps`. Non-proper pairs are dropped (samtools default). Only deliberate difference: MAPQ 255 is dropped (samtools keeps it); these BAMs have none.
 - `data/SH12277.bam` (1.1 GB) + `data/SH17265.bam` (1.8 GB) pile up in ~39 s single-threaded against the 47k fixture (a hand-written CIGAR walk was 3x faster but not bit-identical to samtools; rejected).
 

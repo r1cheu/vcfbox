@@ -77,6 +77,31 @@ TEST_CASE(
     REQUIRE(geno.get(2, 1));
     REQUIRE(geno.get(2, 2));
     REQUIRE_FALSE(geno.get(1, 2));
+    REQUIRE(panel.n_het_calls() == 0);
+}
+
+TEST_CASE(
+    "load_panel marks heterozygous parents instead of rejecting them",
+    "[parentage][panel]")
+{
+    FileFixture files;
+    PanelVcf vcf;
+    vcf.sites = {
+        {"chr01", 101, "A", "G", {"0/1", "1/1", "0/0"}},
+        {"chr01", 205, "C", "T", {"0/0", "1|0", "1/1"}},
+    };
+
+    const Panel panel = load(files, vcf);
+
+    REQUIRE(panel.n_het_calls() == 2);
+    REQUIRE(panel.het().get(0, 0));
+    REQUIRE_FALSE(panel.geno().get(0, 0));
+    REQUIRE(panel.het().get(1, 1));
+    REQUIRE_FALSE(panel.geno().get(1, 1));
+    REQUIRE_FALSE(panel.het().get(1, 0));
+    REQUIRE(panel.geno().get(1, 0));
+    REQUIRE_THAT(panel.sites().freq1(0), WithinAbs(3.0 / 6, 1e-6));
+    REQUIRE_THAT(panel.sites().freq1(1), WithinAbs(3.0 / 6, 1e-6));
 }
 
 TEST_CASE(
@@ -119,7 +144,7 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "load_panel rejects genotypes that are not homozygous diploid calls",
+    "load_panel rejects genotypes that are not diploid calls",
     "[parentage][panel]")
 {
     FileFixture files;
@@ -131,13 +156,6 @@ TEST_CASE(
         REQUIRE_THROWS_WITH(
             load(files, vcf),
             ContainsSubstring("chr01:205 P2: missing genotype"));
-    }
-    SECTION("heterozygous")
-    {
-        vcf.sites = {{"chr01", 205, "A", "G", {"0/0", "0/0", "0/1"}}};
-        REQUIRE_THROWS_WITH(
-            load(files, vcf),
-            ContainsSubstring("chr01:205 P3: heterozygous genotype 0/1"));
     }
     SECTION("haploid on one sample")
     {
@@ -348,6 +366,13 @@ TEST_CASE(
         const Panel panel = load(files, vcf, options);
         REQUIRE(panel.near_duplicates().size() == 1);
     }
+    SECTION("a heterozygous site is not counted as discordant")
+    {
+        vcf.sites[2].gts = {"0/0", "0/0", "0/1"};
+        options.duplicate_max_discordance = 0.25;  // 1 of 4 sites
+        const Panel panel = load(files, vcf, options);
+        REQUIRE(panel.near_duplicates().size() == 3);
+    }
 }
 
 TEST_CASE(
@@ -362,13 +387,20 @@ TEST_CASE(
     SECTION("names versus rows")
     {
         REQUIRE_THROWS_WITH(
-            Panel(sites, {"a", "b"}, BitRows(1, 1), 0.001, 0),
+            Panel(sites, {"a", "b"}, BitRows(1, 1), BitRows(1, 1), 0.001, 0),
             ContainsSubstring("2 parent names but 1 genotype rows"));
     }
     SECTION("sites versus columns")
     {
         REQUIRE_THROWS_WITH(
-            Panel(sites, {"a"}, BitRows(1, 3), 0.001, 0),
+            Panel(sites, {"a"}, BitRows(1, 3), BitRows(1, 3), 0.001, 0),
             ContainsSubstring("1 sites but 3 genotype columns"));
+    }
+    SECTION("genotype versus heterozygosity matrix")
+    {
+        REQUIRE_THROWS_WITH(
+            Panel(sites, {"a"}, BitRows(1, 1), BitRows(2, 1), 0.001, 0),
+            ContainsSubstring(
+                "genotype matrix is 1 x 1 but heterozygosity matrix is 2 x 1"));
     }
 }

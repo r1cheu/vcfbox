@@ -28,29 +28,35 @@ struct NearDuplicate
     size_t n_discordant = 0;
 };
 
-// Homozygous, fully called parent panel. Row k of `geno()` is parent k; bit s
-// is 1 when the parent carries allele1 at site s and 0 for allele0.
+// Fully called parent panel. Row k of `geno()` is parent k; bit s is 1 when
+// the parent carries allele1 at site s and 0 for allele0. Bit s of `het()`
+// is 1 where the parent is heterozygous (residual heterozygosity of an
+// inbred line); its `geno` bit is then 0 and carries no information.
 class Panel
 {
    public:
-    // Takes ownership of the three parallel containers and records every
-    // parent pair differing on at most `duplicate_max_discordance` of the
-    // sites. Throws when `names`, `geno` and `sites` disagree on the number
-    // of parents or sites.
+    // Takes ownership of the parallel containers and records every parent
+    // pair differing on at most `duplicate_max_discordance` of the sites
+    // where neither is heterozygous. Throws when `names`, `geno`, `het` and
+    // `sites` disagree on the number of parents or sites.
     Panel(
         SiteTable sites,
         std::vector<std::string> names,
         BitRows geno,
+        BitRows het,
         double duplicate_max_discordance,
         size_t n_excluded_sites);
 
     auto n_parents() const -> size_t { return names_.size(); }
     auto n_sites() const -> size_t { return sites_.size(); }
     auto n_excluded_sites() const -> size_t { return n_excluded_sites_; }
+    // Heterozygous calls over all parents and sites.
+    auto n_het_calls() const -> size_t { return n_het_calls_; }
 
     auto sites() const -> const SiteTable& { return sites_; }
     auto names() const -> std::span<const std::string> { return names_; }
     auto geno() const -> const BitRows& { return geno_; }
+    auto het() const -> const BitRows& { return het_; }
     auto near_duplicates() const -> std::span<const NearDuplicate>
     {
         return near_duplicates_;
@@ -60,13 +66,16 @@ class Panel
     SiteTable sites_;
     std::vector<std::string> names_;
     BitRows geno_;
+    BitRows het_;
     std::vector<NearDuplicate> near_duplicates_;
     size_t n_excluded_sites_ = 0;
+    size_t n_het_calls_ = 0;
 };
 
-// Loads a bi-allelic SNP panel. Every genotype must be homozygous and
-// called; anything else (missing, heterozygous, multi-allelic, indel,
-// unsorted or duplicated positions) is an error.
+// Loads a bi-allelic SNP panel. Every genotype must be a diploid call;
+// anything else (missing, haploid, multi-allelic, indel, unsorted or
+// duplicated positions) is an error. `freq1` of a site is the allele1
+// dosage over all parents.
 [[nodiscard]] auto load_panel(
     const std::string& vcf_path,
     const PanelOptions& options) -> Panel;

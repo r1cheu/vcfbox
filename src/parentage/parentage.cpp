@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <format>
 #include <iostream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -14,6 +15,7 @@
 #include "parentage/counts_io.h"
 #include "parentage/panel.h"
 #include "parentage/pileup.h"
+#include "parentage/score.h"
 
 namespace fs = std::filesystem;
 
@@ -24,13 +26,14 @@ namespace
 auto print_panel_summary(const Panel& panel) -> void
 {
     std::cerr << std::format(
-        "Panel: {} parents, {} sites on {} contigs{}\n",
+        "Panel: {} parents, {} sites on {} contigs{}, {} heterozygous calls\n",
         panel.n_parents(),
         panel.n_sites(),
         panel.sites().contigs().size(),
         panel.n_excluded_sites() > 0
             ? std::format(" ({} excluded)", panel.n_excluded_sites())
-            : "");
+            : "",
+        panel.n_het_calls());
 
     for (const auto& dup : panel.near_duplicates())
     {
@@ -65,6 +68,52 @@ auto print_sample_summary(const SampleCounts& counts, const std::string& origin)
         static_cast<double>(counts.bases_used())
             / static_cast<double>(counts.n_sites()),
         stats.bases_skipped_baseq);
+}
+
+// Temporary stderr output; the TSV report replaces it.
+auto print_scores(
+    const Panel& panel,
+    const std::string& sample,
+    const SampleScores& scores) -> void
+{
+    const std::span<const std::string> names = panel.names();
+    const PairReport& best = scores.top.front();
+    const SingleStats& single = scores.singles.front();
+    std::cerr << std::format(
+        "Sample {}: {} covered sites; best {} x {} (lod_vs_null {:.1f}, "
+        "lod_vs_second {:.1f}, hom_mismatch {:.4f}, het_alt {:.3f}); best "
+        "single {} (lod_vs_null {:.1f}, allele_absent {:.4f})\n",
+        sample,
+        scores.n_covered,
+        names[best.stats.a],
+        names[best.stats.b],
+        best.lod_vs_null,
+        scores.lod_vs_second,
+        best.hom_mismatch_rate,
+        best.het_alt_fraction,
+        names[single.parent],
+        single.lod_vs_null,
+        single.allele_absent_rate);
+    std::cerr << "  rank\ta\tb\tscore\thom_conc\thom_disc\thet_0\thet_1\t"
+                 "lod_vs_null\thom_mismatch\thet_alt\n";
+    for (size_t rank = 0; rank < scores.top.size(); ++rank)
+    {
+        const PairReport& report = scores.top[rank];
+        const PairStats& st = report.stats;
+        std::cerr << std::format(
+            "  {}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1f}\t{:.4f}\t{:.3f}\n",
+            rank + 1,
+            names[st.a],
+            names[st.b],
+            st.score,
+            st.hom_conc,
+            st.hom_disc,
+            st.het_0,
+            st.het_1,
+            report.lod_vs_null,
+            report.hom_mismatch_rate,
+            report.het_alt_fraction);
+    }
 }
 
 auto sample_name_from_path(const std::string& path) -> std::string
@@ -159,14 +208,25 @@ auto run(const RunOptions& options) -> void
     {
         return;
     }
+    if (options.top == 0)
+    {
+        throw std::runtime_error("--top must be at least 1");
+    }
     const std::vector<BamEntry> bams = read_bam_list(options.bams_path);
     PileupOptions pileup_options;
     pileup_options.min_mapq = options.min_mapq;
     pileup_options.min_baseq = options.min_baseq;
     pileup_options.dedup_overlaps = !options.keep_overlaps;
+    ScoreOptions score_options;
+    score_options.error_rate = options.error_rate;
+    score_options.top = options.top;
+    score_options.candidates = options.candidates;
     for (const auto& bam : bams)
     {
-        obtain_counts(bam, panel.sites(), options, pileup_options);
+        const SampleCounts counts
+            = obtain_counts(bam, panel.sites(), options, pileup_options);
+        print_scores(
+            panel, bam.sample, score_sample(panel, counts, score_options));
     }
 }
 }  // namespace vcfbox::parentage

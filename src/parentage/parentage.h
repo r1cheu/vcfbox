@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,9 @@ struct RunOptions
     int min_mapq = 20;
     int min_baseq = 20;
     bool keep_overlaps = false;  // count both mates over the same site
+    double error_rate = 0.01;
+    size_t top = 10;         // pairs printed per sample
+    size_t candidates = 20;  // parents paired, by single-parent lod; 0 = all
 };
 
 struct BamEntry
@@ -30,7 +34,7 @@ struct BamEntry
     -> std::vector<BamEntry>;
 
 // Loads the panel, then counts alleles for every listed BAM (or reads the
-// counts back from `counts_dir`). Scoring stages are added on top of this
-// entry point as they are implemented.
+// counts back from `counts_dir`) and scores it against every parent pair.
+// Results go to stderr until the report stage exists.
 auto run(const RunOptions& options) -> void;
 }  // namespace vcfbox::parentage

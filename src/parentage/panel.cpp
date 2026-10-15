@@ -208,9 +208,9 @@ auto contig_from_header(const bcf_hdr_t* hdr, int rid) -> ContigInfo
     return info;
 }
 
-// The allele (0 or 1) carried by both copies of a diploid homozygous GT.
-// Throws for haploid, missing and heterozygous calls.
-auto homozygous_allele(
+// Allele1 dosage (0, 1 or 2) of a diploid GT. Throws for haploid and
+// missing calls.
+auto allele1_dosage(
     int32_t a0,
     int32_t a1,
     const bcf_hdr_t* hdr,
@@ -235,26 +235,19 @@ auto homozygous_allele(
                 site_label(hdr, rec),
                 parent));
     }
-    if (bcf_gt_allele(a0) != bcf_gt_allele(a1))
-    {
-        throw std::runtime_error(
-            std::format(
-                "{} {}: heterozygous genotype {}; parents must be homozygous",
-                site_label(hdr, rec),
-                parent,
-                gt_to_string(a0, a1)));
-    }
-    return bcf_gt_allele(a0);
+    return bcf_gt_allele(a0) + bcf_gt_allele(a1);
 }
 
-// Reads the GT of every parent at `rec`, sets the allele1 bits in `rows` and
-// advances it to the next site. Returns the number of allele1 parents.
+// Reads the GT of every parent at `rec`, sets the allele1 / heterozygous
+// bits in `geno` / `het` and advances both to the next site. Returns the
+// allele1 dosage summed over parents.
 auto read_site_genotypes(
     const bcf_hdr_t* hdr,
     bcf1_t* rec,
     genotype_buffer& gt,
     std::span<const std::string> names,
-    RowBuilder& rows) -> size_t
+    RowBuilder& geno,
+    RowBuilder& het) -> size_t
 {
     const int n_gt = read_genotypes(hdr, rec, gt);
     if (n_gt != 2 * static_cast<int>(names.size()))
@@ -265,18 +258,24 @@ auto read_site_genotypes(
                 site_label(hdr, rec)));
     }
     const std::span<const int32_t> g(gt.data.get(), static_cast<size_t>(n_gt));
-    size_t n_alt = 0;
+    size_t dosage = 0;
     for (size_t k = 0; k < names.size(); ++k)
     {
-        if (homozygous_allele(g[2 * k], g[(2 * k) + 1], hdr, rec, names[k])
-            == 1)
+        const int d
+            = allele1_dosage(g[2 * k], g[(2 * k) + 1], hdr, rec, names[k]);
+        if (d == 2)
         {
-            rows.set(k);
-            ++n_alt;
+            geno.set(k);
         }
+        else if (d == 1)
+        {
+            het.set(k);
+        }
+        dosage += static_cast<size_t>(d);
     }
-    rows.next_site();
-    return n_alt;
+    geno.next_site();
+    het.next_site();
+    return dosage;
 }
 }  // namespace
 
@@ -287,7 +286,8 @@ auto load_panel(const std::string& vcf_path, const PanelOptions& options)
     auto [file, hdr] = open_panel_vcf(vcf_path);
     std::vector<std::string> names = sample_names(hdr.get());
 
-    RowBuilder rows(names.size());
+    RowBuilder geno_rows(names.size());
+    RowBuilder het_rows(names.size());
     SiteTable sites;
     size_t n_excluded_sites = 0;
     int current_rid = -1;
@@ -319,22 +319,24 @@ auto load_panel(const std::string& vcf_path, const PanelOptions& options)
 
         bcf_unpack(rec.get(), BCF_UN_STR);
         check_alleles(hdr.get(), rec.get());
-        const size_t n_alt
-            = read_site_genotypes(hdr.get(), rec.get(), gt, names, rows);
+        const size_t dosage = read_site_genotypes(
+            hdr.get(), rec.get(), gt, names, geno_rows, het_rows);
         sites.add_site(
             rec->pos,
             encode_base(rec->d.allele[0][0]),
             encode_base(rec->d.allele[1][0]),
-            static_cast<float>(n_alt) / static_cast<float>(names.size()));
+            static_cast<float>(dosage) / static_cast<float>(2 * names.size()));
     }
     counter->done();
     sites.finish();
 
-    BitRows geno = rows.finish(sites.size());
+    BitRows geno = geno_rows.finish(sites.size());
+    BitRows het = het_rows.finish(sites.size());
     return Panel(
         std::move(sites),
         std::move(names),
         std::move(geno),
+        std::move(het),
         options.duplicate_max_discordance,
         n_excluded_sites);
 }
@@ -343,11 +345,13 @@ Panel::Panel(
     SiteTable sites,
     std::vector<std::string> names,
     BitRows geno,
+    BitRows het,
     double duplicate_max_discordance,
     size_t n_excluded_sites)
     : sites_(std::move(sites)),
       names_(std::move(names)),
       geno_(std::move(geno)),
+      het_(std::move(het)),
       n_excluded_sites_(n_excluded_sites)
 {
     if (geno_.rows() != names_.size())
@@ -366,6 +370,21 @@ Panel::Panel(
                 sites_.size(),
                 geno_.n_bits()));
     }
+    if (het_.rows() != geno_.rows() || het_.n_bits() != geno_.n_bits())
+    {
+        throw std::logic_error(
+            std::format(
+                "Panel: genotype matrix is {} x {} but heterozygosity matrix "
+                "is {} x {}",
+                geno_.rows(),
+                geno_.n_bits(),
+                het_.rows(),
+                het_.n_bits()));
+    }
+    for (size_t i = 0; i < names_.size(); ++i)
+    {
+        n_het_calls_ += popcount_rows(het_.row(i));
+    }
 
     const auto max_diff = static_cast<size_t>(
         duplicate_max_discordance * static_cast<double>(sites_.size()));
@@ -373,7 +392,8 @@ Panel::Panel(
     {
         for (size_t j = i + 1; j < names_.size(); ++j)
         {
-            const size_t n_diff = popcount_xor(geno_.row(i), geno_.row(j));
+            const size_t n_diff = popcount_discordant(
+                geno_.row(i), geno_.row(j), het_.row(i), het_.row(j));
             if (n_diff <= max_diff)
             {
                 near_duplicates_.push_back(

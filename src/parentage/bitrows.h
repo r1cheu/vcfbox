@@ -52,14 +52,29 @@ class BitRows
     std::vector<uint64_t> bits_;
 };
 
-inline auto popcount_xor(
-    std::span<const uint64_t> a,
-    std::span<const uint64_t> b) -> size_t
+inline auto popcount_rows(std::span<const uint64_t> a) -> size_t
 {
     size_t n = 0;
-    for (size_t w = 0; w < a.size(); ++w)
+    for (const uint64_t word : a)
     {
-        n += static_cast<size_t>(std::popcount(a[w] ^ b[w]));
+        n += static_cast<size_t>(std::popcount(word));
+    }
+    return n;
+}
+
+// Sites where the two genotype rows differ and neither parent is
+// heterozygous.
+inline auto popcount_discordant(
+    std::span<const uint64_t> geno_a,
+    std::span<const uint64_t> geno_b,
+    std::span<const uint64_t> het_a,
+    std::span<const uint64_t> het_b) -> size_t
+{
+    size_t n = 0;
+    for (size_t w = 0; w < geno_a.size(); ++w)
+    {
+        n += static_cast<size_t>(
+            std::popcount((geno_a[w] ^ geno_b[w]) & ~(het_a[w] | het_b[w])));
     }
     return n;
 }

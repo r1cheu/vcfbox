@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 namespace CLI
@@ -30,6 +31,9 @@ struct ParentageOptions
     int min_mapq = 20;
     int min_baseq = 20;
     bool keep_overlaps = false;
+    double error_rate = 0.01;
+    size_t top = 10;
+    size_t candidates = 20;
 };
 
 CLI::App* add_parentage_command(CLI::App& app, ParentageOptions& options);
