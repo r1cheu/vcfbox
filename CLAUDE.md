@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 pixi run build      # produces .build/vcfbox
 ```
 
-htslib/cmake/ninja/compiler come from `.pixi/envs/default` — always go through pixi. Submodules `ext/CLI11` and `ext/eigen` must be initialized. No test framework; verify against fixtures in `data/`.
+htslib/CLI11/Eigen/cmake/ninja/compiler come from `.pixi/envs/default` — always go through pixi. No test framework; verify against fixtures in `data/`.
 
 ## CLI
 

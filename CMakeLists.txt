@@ -12,13 +12,14 @@ set(CMAKE_BUILD_TYPE Release)
 
 set(HTSLIB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.pixi/envs/default")
 link_directories(${HTSLIB_ROOT}/lib)
+list(APPEND CMAKE_PREFIX_PATH ${HTSLIB_ROOT})
 
 find_package(Threads REQUIRED)
 set(BLA_VENDOR OpenBLAS)
 find_package(BLAS REQUIRED)
 
-add_subdirectory(ext/CLI11 EXCLUDE_FROM_ALL)
-add_subdirectory(ext/eigen EXCLUDE_FROM_ALL)
+find_package(CLI11 CONFIG REQUIRED)
+find_package(Eigen3 CONFIG REQUIRED)
 
 add_library(barkeep INTERFACE)
 target_include_directories(
