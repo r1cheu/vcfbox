@@ -91,4 +91,16 @@ inline auto popcount_discordant(const ParentRows& a, const ParentRows& b)
     }
     return n;
 }
+
+// Sites where either parent is heterozygous or missing.
+inline auto popcount_uncertain(const ParentRows& a, const ParentRows& b)
+    -> size_t
+{
+    size_t n = 0;
+    for (size_t w = 0; w < a.geno.size(); ++w)
+    {
+        n += static_cast<size_t>(std::popcount(~both_homozygous(a, b, w)));
+    }
+    return n;
+}
 }  // namespace vcfbox::parentage

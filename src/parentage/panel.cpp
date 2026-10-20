@@ -421,20 +421,22 @@ Panel::Panel(
         n_missing_calls_ += popcount_rows(missing_.row(i));
     }
 
-    const auto max_diff = static_cast<size_t>(
-        duplicate_max_discordance * static_cast<double>(sites_.size()));
     for (size_t i = 0; i < names_.size(); ++i)
     {
         for (size_t j = i + 1; j < names_.size(); ++j)
         {
             const size_t n_diff
                 = popcount_discordant(parent_rows(i), parent_rows(j));
-            if (n_diff <= max_diff)
+            const size_t n_compared = sites_.size()
+                - popcount_uncertain(parent_rows(i), parent_rows(j));
+            if (static_cast<double>(n_diff)
+                <= duplicate_max_discordance * static_cast<double>(n_compared))
             {
                 near_duplicates_.push_back(
                     {static_cast<uint32_t>(i),
                      static_cast<uint32_t>(j),
-                     n_diff});
+                     n_diff,
+                     n_compared});
             }
         }
     }

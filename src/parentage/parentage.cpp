@@ -48,12 +48,13 @@ auto print_panel_summary(const Panel& panel) -> void
     for (const auto& dup : panel.near_duplicates())
     {
         std::cerr << std::format(
-            "Warning: parents {} and {} differ at only {} of {} sites; "
+            "Warning: parents {} and {} differ at only {} of {} sites where "
+            "both are homozygous; "
             "samples derived from either will be AMBIGUOUS\n",
             panel.names()[dup.parent_a],
             panel.names()[dup.parent_b],
             dup.n_discordant,
-            panel.n_sites());
+            dup.n_compared);
     }
 }
 

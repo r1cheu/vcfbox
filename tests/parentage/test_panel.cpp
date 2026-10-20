@@ -397,6 +397,7 @@ TEST_CASE(
         REQUIRE(panel.near_duplicates()[0].parent_a == 0);
         REQUIRE(panel.near_duplicates()[0].parent_b == 1);
         REQUIRE(panel.near_duplicates()[0].n_discordant == 0);
+        REQUIRE(panel.near_duplicates()[0].n_compared == 4);
     }
     SECTION("threshold at exactly the discordance includes the pair")
     {
@@ -412,12 +413,30 @@ TEST_CASE(
         const Panel panel = load(files, vcf, options);
         REQUIRE(panel.near_duplicates().size() == 1);
     }
-    SECTION("a heterozygous site is not counted as discordant")
+    SECTION("a heterozygous site is left out of the compared sites")
     {
         vcf.sites[2].gts = {"0/0", "0/0", "0/1"};
-        options.duplicate_max_discordance = 0.25;  // 1 of 4 sites
+        options.duplicate_max_discordance = 1.0 / 3;  // 1 of 3 sites
         const Panel panel = load(files, vcf, options);
         REQUIRE(panel.near_duplicates().size() == 3);
+        REQUIRE(panel.near_duplicates()[1].n_discordant == 1);
+        REQUIRE(panel.near_duplicates()[1].n_compared == 3);
+    }
+    SECTION("a missing site is left out of the compared sites")
+    {
+        vcf.sites[2].gts = {"0/0", "0/0", "./."};
+        options.duplicate_max_discordance = 1.0 / 3;  // 1 of 3 sites
+        const Panel panel = load(files, vcf, options);
+        REQUIRE(panel.near_duplicates().size() == 3);
+        REQUIRE(panel.near_duplicates()[1].n_discordant == 1);
+        REQUIRE(panel.near_duplicates()[1].n_compared == 3);
+    }
+    SECTION("just below the discordance over the compared sites excludes it")
+    {
+        vcf.sites[2].gts = {"0/0", "0/0", "./."};
+        options.duplicate_max_discordance = 0.33;
+        const Panel panel = load(files, vcf, options);
+        REQUIRE(panel.near_duplicates().size() == 1);
     }
 }
 

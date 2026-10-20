@@ -15,8 +15,8 @@ struct PanelOptions
 {
     // Optional file of `contig<TAB>pos` (1-based) sites to drop at load.
     std::string exclude_sites_path;
-    // Parent pairs whose genotypes differ on at most this fraction of sites
-    // are reported as near-duplicates. They are never merged.
+    // Parent pairs whose genotypes differ on at most this fraction of the
+    // sites where both are homozygous are reported as near-duplicates. They are never merged.
     double duplicate_max_discordance = 0.001;
 };
 
@@ -26,6 +26,7 @@ struct NearDuplicate
     uint32_t parent_a = 0;
     uint32_t parent_b = 0;
     size_t n_discordant = 0;
+    size_t n_compared = 0;  // sites where both are homozygous
 };
 
 // Parent panel. Row k of `geno()` is parent k; bit s is 1 when the parent

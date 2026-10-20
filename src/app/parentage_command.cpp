@@ -28,7 +28,7 @@ auto add_parentage_command(CLI::App& app, ParentageOptions& options)
             "--duplicate-max-discordance",
             options.duplicate_max_discordance,
             "Warn about parent pairs differing on at most this fraction of "
-            "sites")
+            "the sites where both are homozygous")
         ->capture_default_str();
     command->add_option(
         "-b,--bams",

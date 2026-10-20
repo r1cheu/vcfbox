@@ -6,6 +6,7 @@ using vcfbox::parentage::BitRows;
 using vcfbox::parentage::ParentRows;
 using vcfbox::parentage::popcount_discordant;
 using vcfbox::parentage::popcount_rows;
+using vcfbox::parentage::popcount_uncertain;
 
 TEST_CASE(
     "BitRows rounds the row width up to whole words",
@@ -88,4 +89,23 @@ TEST_CASE(
         missing.set(0, 127);
         REQUIRE(popcount_discordant(a, b) == 1);
     }
+}
+
+TEST_CASE(
+    "popcount_uncertain counts sites where either parent is heterozygous or "
+    "missing",
+    "[parentage][bitrows]")
+{
+    // 100 sites: the padding bits of the second word are not counted.
+    const BitRows geno(2, 100);
+    BitRows het(2, 100);
+    het.set(0, 3);
+    het.set(1, 3);
+    het.set(1, 70);
+    BitRows missing(2, 100);
+    missing.set(0, 99);
+    const ParentRows a{geno.row(0), het.row(0), missing.row(0)};
+    const ParentRows b{geno.row(1), het.row(1), missing.row(1)};
+
+    REQUIRE(popcount_uncertain(a, b) == 3);
 }
