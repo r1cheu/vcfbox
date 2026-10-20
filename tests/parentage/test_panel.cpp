@@ -105,6 +105,59 @@ TEST_CASE(
 }
 
 TEST_CASE(
+    "load_panel marks missing and half-missing calls as missing",
+    "[parentage][panel]")
+{
+    FileFixture files;
+    PanelVcf vcf;
+    vcf.sites = {
+        {"chr01", 101, "A", "G", {"./.", "1/1", "0/0"}},
+        {"chr01", 205, "C", "T", {"1/1", "./1", "0|."}},
+    };
+
+    const Panel panel = load(files, vcf);
+
+    REQUIRE(panel.n_missing_calls() == 3);
+    REQUIRE(panel.missing().get(0, 0));
+    REQUIRE_FALSE(panel.geno().get(0, 0));
+    REQUIRE(panel.missing().get(1, 1));
+    REQUIRE_FALSE(panel.geno().get(1, 1));
+    REQUIRE(panel.missing().get(2, 1));
+    REQUIRE_FALSE(panel.missing().get(0, 1));
+    REQUIRE(panel.geno().get(0, 1));
+    REQUIRE(panel.n_het_calls() == 0);
+}
+
+TEST_CASE(
+    "load_panel takes freq1 over the called parents",
+    "[parentage][panel]")
+{
+    FileFixture files;
+    PanelVcf vcf;
+    vcf.sites = {
+        {"chr01", 101, "A", "G", {"./.", "1/1", "0/0"}},
+        {"chr01", 205, "C", "T", {"1/1", "./.", "0/1"}},
+    };
+
+    const Panel panel = load(files, vcf);
+
+    REQUIRE_THAT(panel.sites().freq1(0), WithinAbs(2.0 / 4, 1e-6));
+    REQUIRE_THAT(panel.sites().freq1(1), WithinAbs(3.0 / 4, 1e-6));
+}
+
+TEST_CASE(
+    "load_panel rejects a site where no parent is called",
+    "[parentage][panel]")
+{
+    FileFixture files;
+    PanelVcf vcf;
+    vcf.sites = {{"chr01", 205, "A", "G", {"./.", "./1", "./."}}};
+
+    REQUIRE_THROWS_WITH(
+        load(files, vcf), ContainsSubstring("chr01:205: no parent is called"));
+}
+
+TEST_CASE(
     "load_panel places bits correctly across 64-site word boundaries",
     "[parentage][panel]")
 {
@@ -150,13 +203,6 @@ TEST_CASE(
     FileFixture files;
     PanelVcf vcf;
 
-    SECTION("missing")
-    {
-        vcf.sites = {{"chr01", 205, "A", "G", {"0/0", "./.", "0/0"}}};
-        REQUIRE_THROWS_WITH(
-            load(files, vcf),
-            ContainsSubstring("chr01:205 P2: missing genotype"));
-    }
     SECTION("haploid on one sample")
     {
         vcf.sites = {{"chr01", 205, "A", "G", {"1", "0/0", "0/0"}}};
@@ -314,7 +360,7 @@ TEST_CASE(
     }
     SECTION("an excluded site is not validated")
     {
-        vcf.sites[1].gts = {"0/0", "0/1", "./."};
+        vcf.sites[1].gts = {"0/0", "0/1", "0"};
         options.exclude_sites_path = files.create_text_file("chr01\t205\n");
         const Panel panel = load(files, vcf, options);
         REQUIRE(panel.n_sites() == 2);
@@ -387,20 +433,55 @@ TEST_CASE(
     SECTION("names versus rows")
     {
         REQUIRE_THROWS_WITH(
-            Panel(sites, {"a", "b"}, BitRows(1, 1), BitRows(1, 1), 0.001, 0),
+            Panel(
+                sites,
+                {"a", "b"},
+                BitRows(1, 1),
+                BitRows(1, 1),
+                BitRows(1, 1),
+                0.001,
+                0),
             ContainsSubstring("2 parent names but 1 genotype rows"));
     }
     SECTION("sites versus columns")
     {
         REQUIRE_THROWS_WITH(
-            Panel(sites, {"a"}, BitRows(1, 3), BitRows(1, 3), 0.001, 0),
+            Panel(
+                sites,
+                {"a"},
+                BitRows(1, 3),
+                BitRows(1, 3),
+                BitRows(1, 3),
+                0.001,
+                0),
             ContainsSubstring("1 sites but 3 genotype columns"));
     }
     SECTION("genotype versus heterozygosity matrix")
     {
         REQUIRE_THROWS_WITH(
-            Panel(sites, {"a"}, BitRows(1, 1), BitRows(2, 1), 0.001, 0),
+            Panel(
+                sites,
+                {"a"},
+                BitRows(1, 1),
+                BitRows(2, 1),
+                BitRows(1, 1),
+                0.001,
+                0),
             ContainsSubstring(
                 "genotype matrix is 1 x 1 but heterozygosity matrix is 2 x 1"));
+    }
+    SECTION("genotype versus missing matrix")
+    {
+        REQUIRE_THROWS_WITH(
+            Panel(
+                sites,
+                {"a"},
+                BitRows(1, 1),
+                BitRows(1, 1),
+                BitRows(1, 2),
+                0.001,
+                0),
+            ContainsSubstring(
+                "genotype matrix is 1 x 1 but missing matrix is 1 x 2"));
     }
 }

@@ -62,19 +62,32 @@ inline auto popcount_rows(std::span<const uint64_t> a) -> size_t
     return n;
 }
 
-// Sites where the two genotype rows differ and neither parent is
-// heterozygous.
-inline auto popcount_discordant(
-    std::span<const uint64_t> geno_a,
-    std::span<const uint64_t> geno_b,
-    std::span<const uint64_t> het_a,
-    std::span<const uint64_t> het_b) -> size_t
+// Bit planes of one panel parent: `geno` is 1 for allele1, `het` for a
+// heterozygous call and `missing` for no call; `geno` is 0 wherever `het` or
+// `missing` is set.
+struct ParentRows
+{
+    std::span<const uint64_t> geno;
+    std::span<const uint64_t> het;
+    std::span<const uint64_t> missing;
+};
+
+// Bits where both parents are homozygous.
+inline auto both_homozygous(const ParentRows& a, const ParentRows& b, size_t w)
+    -> uint64_t
+{
+    return ~(a.het[w] | a.missing[w] | b.het[w] | b.missing[w]);
+}
+
+// Sites where both parents are homozygous and carry different alleles.
+inline auto popcount_discordant(const ParentRows& a, const ParentRows& b)
+    -> size_t
 {
     size_t n = 0;
-    for (size_t w = 0; w < geno_a.size(); ++w)
+    for (size_t w = 0; w < a.geno.size(); ++w)
     {
         n += static_cast<size_t>(
-            std::popcount((geno_a[w] ^ geno_b[w]) & ~(het_a[w] | het_b[w])));
+            std::popcount((a.geno[w] ^ b.geno[w]) & both_homozygous(a, b, w)));
     }
     return n;
 }

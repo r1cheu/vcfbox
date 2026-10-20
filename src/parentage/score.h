@@ -20,7 +20,8 @@ struct ScoreOptions
 };
 
 // A sample's reads split by what parents `a` and `b` carry at each site.
-// Sites where either parent is heterozygous are left out of every count.
+// Sites where either parent is heterozygous or missing are left out of every
+// count.
 struct PairStats
 {
     uint32_t a = 0;  // a <= b; a == b is selfing
@@ -37,14 +38,16 @@ struct PairReport
 {
     PairStats stats;
     // ln L(pair) - ln L(random panel pair) over all covered sites; at sites
-    // where a parent is heterozygous the F1 genotype is marginalised.
+    // where a parent is heterozygous or missing the F1 genotype is
+    // marginalised over the two gametes.
     double lod_vs_null = 0;
     double hom_mismatch_rate = 0;  // hom_disc / (hom_conc + hom_disc)
     double het_alt_fraction = 0;   // het_1 / (het_0 + het_1)
 };
 
 // One parent with the other one marginalised over the panel allele
-// frequencies (and its own heterozygous sites over the two gametes).
+// frequencies (and its own heterozygous sites over the two gametes; its
+// missing sites score as the null).
 struct SingleStats
 {
     uint32_t parent = 0;

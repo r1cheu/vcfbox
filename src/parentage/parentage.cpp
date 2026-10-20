@@ -34,14 +34,16 @@ namespace
 auto print_panel_summary(const Panel& panel) -> void
 {
     std::cerr << std::format(
-        "Panel: {} parents, {} sites on {} contigs{}, {} heterozygous calls\n",
+        "Panel: {} parents, {} sites on {} contigs{}, {} heterozygous and {} "
+        "missing calls\n",
         panel.n_parents(),
         panel.n_sites(),
         panel.sites().contigs().size(),
         panel.n_excluded_sites() > 0
             ? std::format(" ({} excluded)", panel.n_excluded_sites())
             : "",
-        panel.n_het_calls());
+        panel.n_het_calls(),
+        panel.n_missing_calls());
 
     for (const auto& dup : panel.near_duplicates())
     {

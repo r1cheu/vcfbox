@@ -130,20 +130,8 @@ auto popcount(uint64_t x) -> uint64_t
     return static_cast<uint64_t>(std::popcount(x));
 }
 
-// Genotype and heterozygosity rows of one parent.
-struct ParentRows
-{
-    std::span<const uint64_t> geno;
-    std::span<const uint64_t> het;
-};
-
-auto parent_rows(const Panel& panel, size_t parent) -> ParentRows
-{
-    return {panel.geno().row(parent), panel.het().row(parent)};
-}
-
-// The four read splits of one pair over the sites where neither parent is
-// heterozygous. Padding bits past the last site are set in `both0`, which is
+// The four read splits of one pair over the sites where both parents are
+// homozygous. Padding bits past the last site are set in `both0`, which is
 // harmless because the planes are zero there.
 auto count_pair(
     const ParentRows& pi,
@@ -153,7 +141,7 @@ auto count_pair(
     PairStats stats;
     for (const uint32_t w : planes.covered_words)
     {
-        const uint64_t called = ~(pi.het[w] | pj.het[w]);
+        const uint64_t called = both_homozygous(pi, pj, w);
         const uint64_t both0 = ~(pi.geno[w] | pj.geno[w]) & called;
         const uint64_t both1 = pi.geno[w] & pj.geno[w] & called;
         const uint64_t mixed = (pi.geno[w] ^ pj.geno[w]) & called;
@@ -183,6 +171,7 @@ struct SiteTerms
     double null_sum = 0;            // Σ ln L(random panel pair)
     double m0_sum = 0;              // Σ [ln L(parent carries allele0) - L_null]
     std::vector<uint32_t> covered;  // sites with reads
+    std::vector<double> m0;             // per covered site
     std::vector<double> m1_minus_m0;    // per covered site
     std::vector<double> mhet_minus_m0;  // per covered site; parent het
     std::vector<uint64_t> two_reads;    // bit set: n0 + n1 >= 2
@@ -226,6 +215,7 @@ auto build_site_terms(
         const double mhet = log_sum_exp({m0, m1}) + w.het;
         terms.null_sum += l_null;
         terms.m0_sum += m0;
+        terms.m0.push_back(m0);
         terms.m1_minus_m0.push_back(m1 - m0);
         terms.mhet_minus_m0.push_back(mhet - m0);
         if (reads >= 2)
@@ -250,23 +240,42 @@ auto ratio(uint64_t num, uint64_t den) -> double
     return den == 0 ? nan : static_cast<double>(num) / static_cast<double>(den);
 }
 
-// Σ ln L(pair) over the covered sites where a parent is heterozygous: the
-// F1 is homozygous or heterozygous with probability 1/2 each (1/4, 1/2, 1/4
-// over the three genotypes when both parents are).
+// Probability that a parent passes on allele1 at bit `mask` of word `w`: 0
+// or 1 when homozygous, 1/2 when heterozygous, the panel frequency `freq1`
+// when missing.
+auto gamete_allele1(
+    const ParentRows& parent,
+    size_t w,
+    uint64_t mask,
+    double freq1) -> double
+{
+    if ((parent.missing[w] & mask) != 0)
+    {
+        return freq1;
+    }
+    if ((parent.het[w] & mask) != 0)
+    {
+        return 0.5;
+    }
+    return (parent.geno[w] & mask) != 0 ? 1 : 0;
+}
+
+// Σ ln L(pair) over the covered sites where a parent is heterozygous or
+// missing: the F1 genotype is marginalised over the two gametes.
 auto uncertain_log_likelihood(
     const ParentRows& pi,
     const ParentRows& pj,
     const CountPlanes& planes,
     const SampleCounts& counts,
+    const SiteTable& sites,
     const ReadWeights& w) -> double
 {
     const std::span<const uint8_t> n0 = counts.n0();
     const std::span<const uint8_t> n1 = counts.n1();
-    const double ln_half = w.het;
     double sum = 0;
     for (const uint32_t word : planes.covered_words)
     {
-        uint64_t uncertain = pi.het[word] | pj.het[word];
+        uint64_t uncertain = ~both_homozygous(pi, pj, word);
         while (uncertain != 0)
         {
             const int bit = std::countr_zero(uncertain);
@@ -279,19 +288,13 @@ auto uncertain_log_likelihood(
             }
             const auto [l00, l01, l11] = site_likelihoods(n0[s], n1[s], w);
             const uint64_t mask = uint64_t{1} << bit;
-            if ((pi.het[word] & pj.het[word] & mask) != 0)
-            {
-                sum += log_sum_exp(
-                    {l00 + (2 * ln_half), l01 + ln_half, l11 + (2 * ln_half)});
-            }
-            else if (((pi.geno[word] | pj.geno[word]) & mask) != 0)
-            {
-                sum += log_sum_exp({l01, l11}) + ln_half;
-            }
-            else
-            {
-                sum += log_sum_exp({l00, l01}) + ln_half;
-            }
+            const double q = sites.freq1(s);
+            const double gi = gamete_allele1(pi, word, mask, q);
+            const double gj = gamete_allele1(pj, word, mask, q);
+            sum += log_sum_exp(
+                {log_or_neg_inf((1 - gi) * (1 - gj)) + l00,
+                 log_or_neg_inf((gi * (1 - gj)) + ((1 - gi) * gj)) + l01,
+                 log_or_neg_inf(gi * gj) + l11});
         }
     }
     return sum;
@@ -306,8 +309,8 @@ auto score_pair(
     const ReadWeights& w,
     double null_sum) -> PairReport
 {
-    const ParentRows pa = parent_rows(panel, a);
-    const ParentRows pb = parent_rows(panel, b);
+    const ParentRows pa = panel.parent_rows(a);
+    const ParentRows pb = panel.parent_rows(b);
     PairStats stats = count_pair(pa, pb, planes);
     stats.a = a;
     stats.b = b;
@@ -318,7 +321,8 @@ auto score_pair(
         = w.conc * static_cast<double>(stats.hom_conc)
           + w.disc * static_cast<double>(stats.hom_disc)
           + w.het * static_cast<double>(stats.het_0 + stats.het_1)
-          + uncertain_log_likelihood(pa, pb, planes, counts, w);
+          + uncertain_log_likelihood(
+              pa, pb, planes, counts, panel.sites(), w);
     return {
         stats,
         log_l - null_sum,
@@ -368,13 +372,17 @@ auto score_singles(const Panel& panel, const SiteTerms& terms)
     singles.reserve(panel.n_parents());
     for (size_t i = 0; i < panel.n_parents(); ++i)
     {
-        const ParentRows parent = parent_rows(panel, i);
+        const ParentRows parent = panel.parent_rows(i);
         double lod = terms.m0_sum;
         for (size_t c = 0; c < terms.covered.size(); ++c)
         {
             const uint32_t s = terms.covered[c];
             const uint64_t mask = uint64_t{1} << (s % 64);
-            if ((parent.het[s / 64] & mask) != 0)
+            if ((parent.missing[s / 64] & mask) != 0)
+            {
+                lod -= terms.m0[c];
+            }
+            else if ((parent.het[s / 64] & mask) != 0)
             {
                 lod += terms.mhet_minus_m0[c];
             }
@@ -387,7 +395,7 @@ auto score_singles(const Panel& panel, const SiteTerms& terms)
         uint64_t two_reads = 0;
         for (size_t w = 0; w < parent.geno.size(); ++w)
         {
-            const uint64_t called = ~parent.het[w];
+            const uint64_t called = ~(parent.het[w] | parent.missing[w]);
             absent += popcount(~parent.geno[w] & called & terms.absent0[w])
                       + popcount(parent.geno[w] & called & terms.absent1[w]);
             two_reads += popcount(called & terms.two_reads[w]);

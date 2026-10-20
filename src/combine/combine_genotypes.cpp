@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -266,9 +267,20 @@ void combine_genotypes(
         {
             continue;
         }
-        if (read_genotypes(header.get(), in_rec.get(), gt) <= 0)
+        const int n_gt = read_genotypes(header.get(), in_rec.get(), gt);
+        if (n_gt <= 0)
         {
             continue;
+        }
+        const int n_samples = bcf_hdr_nsamples(header.get());
+        if (n_gt != 2 * n_samples)
+        {
+            throw std::runtime_error(std::format(
+                "Non-diploid GT at {}:{} (ploidy {}); combine requires "
+                "diploid genotypes",
+                bcf_hdr_id2name(header.get(), in_rec->rid),
+                in_rec->pos + 1,
+                n_gt / n_samples));
         }
 
         auto out_gts = concat_gt(
@@ -276,7 +288,7 @@ void combine_genotypes(
             sample_to_idx,
             gt.data.get(),
             keep_old_samples,
-            gt.capacity);
+            n_gt);
         copy_rec_info(
             header.get(), output_header.get(), in_rec.get(), out_rec.get());
         bcf_update_genotypes(

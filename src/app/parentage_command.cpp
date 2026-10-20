@@ -17,7 +17,7 @@ auto add_parentage_command(CLI::App& app, ParentageOptions& options)
         ->add_option(
             "-v,--vcf",
             options.vcf_path,
-            "Panel VCF (homozygous, fully called)")
+            "Panel VCF of bi-allelic SNP genotypes")
         ->required();
     command->add_option(
         "--exclude-sites",

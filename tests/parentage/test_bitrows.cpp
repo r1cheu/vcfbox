@@ -3,6 +3,7 @@
 #include "parentage/bitrows.h"
 
 using vcfbox::parentage::BitRows;
+using vcfbox::parentage::ParentRows;
 using vcfbox::parentage::popcount_discordant;
 using vcfbox::parentage::popcount_rows;
 
@@ -58,7 +59,8 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "popcount_discordant counts differing bits outside heterozygous sites",
+    "popcount_discordant counts differing bits where both parents are "
+    "homozygous",
     "[parentage][bitrows]")
 {
     BitRows geno(2, 128);
@@ -67,24 +69,23 @@ TEST_CASE(
     geno.set(1, 64);
     geno.set(1, 127);
     BitRows het(2, 128);
+    BitRows missing(2, 128);
+    const ParentRows a{geno.row(0), het.row(0), missing.row(0)};
+    const ParentRows b{geno.row(1), het.row(1), missing.row(1)};
 
-    SECTION("no heterozygous sites")
+    SECTION("every site called homozygous")
     {
-        REQUIRE(
-            popcount_discordant(
-                geno.row(0), geno.row(1), het.row(0), het.row(1))
-            == 2);
-        REQUIRE(
-            popcount_discordant(
-                geno.row(0), geno.row(0), het.row(0), het.row(0))
-            == 0);
+        REQUIRE(popcount_discordant(a, b) == 2);
+        REQUIRE(popcount_discordant(a, a) == 0);
     }
     SECTION("a heterozygous site of either parent is not compared")
     {
         het.set(1, 0);
-        REQUIRE(
-            popcount_discordant(
-                geno.row(0), geno.row(1), het.row(0), het.row(1))
-            == 1);
+        REQUIRE(popcount_discordant(a, b) == 1);
+    }
+    SECTION("a missing site of either parent is not compared")
+    {
+        missing.set(0, 127);
+        REQUIRE(popcount_discordant(a, b) == 1);
     }
 }

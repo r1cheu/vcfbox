@@ -41,13 +41,15 @@ auto make_sites(const std::vector<float>& freq1) -> SiteTable
     return sites;
 }
 
-// Parent rows given as strings of '0' / '1' / 'h' (heterozygous) per site.
+// Parent rows given as strings of '0' / '1' / 'h' (heterozygous) / 'm'
+// (missing) per site.
 auto make_panel(
     const std::vector<float>& freq1,
     const std::vector<std::string>& rows) -> Panel
 {
     BitRows geno(rows.size(), freq1.size());
     BitRows het(rows.size(), freq1.size());
+    BitRows missing(rows.size(), freq1.size());
     for (size_t r = 0; r < rows.size(); ++r)
     {
         for (size_t s = 0; s < rows[r].size(); ++s)
@@ -60,6 +62,10 @@ auto make_panel(
             {
                 het.set(r, s);
             }
+            if (rows[r][s] == 'm')
+            {
+                missing.set(r, s);
+            }
         }
     }
     std::vector<std::string> names;
@@ -68,7 +74,13 @@ auto make_panel(
         names.push_back(std::format("P{}", r + 1));
     }
     return Panel(
-        make_sites(freq1), names, std::move(geno), std::move(het), 0.0, 0);
+        make_sites(freq1),
+        names,
+        std::move(geno),
+        std::move(het),
+        std::move(missing),
+        0.0,
+        0);
 }
 
 auto make_counts(const std::vector<uint8_t>& n0, const std::vector<uint8_t>& n1)
@@ -226,6 +238,79 @@ TEST_CASE(
         REQUIRE(scores.singles[1].parent == 1);
         REQUIRE_THAT(scores.singles[1].lod_vs_null, WithinAbs(-0.75011, 1e-4));
         // Two-read sites 0, 2, 4; site 2 is heterozygous for P2 and dropped.
+        REQUIRE_THAT(
+            scores.singles[1].allele_absent_rate, WithinAbs(0.5, 1e-12));
+    }
+}
+
+// The three-parent layout with P2 missing at site 1 and P3 at site 2:
+//   site      0  1  2  3  4  5
+//   P1        0  0  0  0  0  0
+//   P2        1  m  0  0  0  0
+//   P3        1  1  m  1  0  0
+//   n0        2  0  1  0  3  0
+//   n1        0  1  1  0  0  0
+auto missing_parent_scores(std::optional<ParentPair> expected = std::nullopt)
+    -> SampleScores
+{
+    const Panel panel = make_panel(
+        {2.0F / 3, 2.0F / 3, 1.0F / 3, 1.0F / 3, 0, 0},
+        {"000000", "1m0000", "11m100"});
+    return score_sample(
+        panel,
+        make_counts({2, 0, 1, 0, 3, 0}, {0, 1, 1, 0, 0, 0}),
+        {},
+        expected);
+}
+
+TEST_CASE(
+    "score_sample marginalises missing parent sites over the panel "
+    "frequency",
+    "[parentage][score]")
+{
+    const SampleScores scores = missing_parent_scores();
+
+    SECTION("a site missing in either parent counts for neither")
+    {
+        const auto& p13 = scores.top[0].stats;
+        REQUIRE(p13.a == 0);
+        REQUIRE(p13.b == 2);
+        REQUIRE(p13.hom_conc == 3);
+        REQUIRE(p13.hom_disc == 0);
+        REQUIRE(p13.het_0 == 2);
+        REQUIRE(p13.het_1 == 1);
+        const auto& p12 = scores.top[1].stats;
+        REQUIRE(p12.a == 0);
+        REQUIRE(p12.b == 1);
+        REQUIRE(p12.hom_conc == 4);
+        REQUIRE(p12.hom_disc == 1);
+        REQUIRE(p12.het_0 == 2);
+        REQUIRE(p12.het_1 == 0);
+    }
+    SECTION("lod_vs_null adds the mixture over the missing parent's gamete")
+    {
+        REQUIRE_THAT(scores.top[0].lod_vs_null, WithinAbs(-0.41486, 1e-4));
+        REQUIRE_THAT(scores.top[1].lod_vs_null, WithinAbs(-3.01691, 1e-4));
+    }
+    SECTION("a site missing in both parents scores as the null")
+    {
+        const SampleScores with_p22 = missing_parent_scores(ParentPair{1, 1});
+        REQUIRE_THAT(
+            with_p22.expected->report.lod_vs_null,
+            WithinAbs(-10.16277, 1e-4));
+    }
+    SECTION("single-parent model scores a missing site as the null")
+    {
+        REQUIRE(scores.singles[0].parent == 0);
+        REQUIRE_THAT(scores.singles[0].lod_vs_null, WithinAbs(-0.13059, 1e-4));
+        REQUIRE(scores.singles[1].parent == 2);
+        REQUIRE_THAT(scores.singles[1].lod_vs_null, WithinAbs(-0.75011, 1e-4));
+        REQUIRE(scores.singles[2].parent == 1);
+        REQUIRE_THAT(scores.singles[2].lod_vs_null, WithinAbs(-1.23001, 1e-4));
+    }
+    SECTION("allele_absent_rate leaves out a missing site")
+    {
+        // Two-read sites 0, 2, 4; site 2 is missing for P3 and dropped.
         REQUIRE_THAT(
             scores.singles[1].allele_absent_rate, WithinAbs(0.5, 1e-12));
     }

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -208,14 +209,14 @@ auto contig_from_header(const bcf_hdr_t* hdr, int rid) -> ContigInfo
     return info;
 }
 
-// Allele1 dosage (0, 1 or 2) of a diploid GT. Throws for haploid and
-// missing calls.
+// Allele1 dosage (0, 1 or 2) of a diploid GT; nullopt when either allele is
+// missing. Throws for haploid calls.
 auto allele1_dosage(
     int32_t a0,
     int32_t a1,
     const bcf_hdr_t* hdr,
     const bcf1_t* rec,
-    const std::string& parent) -> int
+    const std::string& parent) -> std::optional<int>
 {
     if (a1 == bcf_int32_vector_end)
     {
@@ -229,25 +230,28 @@ auto allele1_dosage(
     }
     if (bcf_gt_is_missing(a0) || bcf_gt_is_missing(a1))
     {
-        throw std::runtime_error(
-            std::format(
-                "{} {}: missing genotype; the panel must be fully called",
-                site_label(hdr, rec),
-                parent));
+        return std::nullopt;
     }
     return bcf_gt_allele(a0) + bcf_gt_allele(a1);
 }
 
-// Reads the GT of every parent at `rec`, sets the allele1 / heterozygous
-// bits in `geno` / `het` and advances both to the next site. Returns the
-// allele1 dosage summed over parents.
+// Bit planes being built for every parent.
+struct PlaneBuilders
+{
+    RowBuilder geno;
+    RowBuilder het;
+    RowBuilder missing;
+};
+
+// Reads the GT of every parent at `rec`, sets its bits in `planes` and
+// advances them to the next site. Returns the allele1 frequency over the
+// called parents; throws when no parent is called.
 auto read_site_genotypes(
     const bcf_hdr_t* hdr,
     bcf1_t* rec,
     genotype_buffer& gt,
     std::span<const std::string> names,
-    RowBuilder& geno,
-    RowBuilder& het) -> size_t
+    PlaneBuilders& planes) -> float
 {
     const int n_gt = read_genotypes(hdr, rec, gt);
     if (n_gt != 2 * static_cast<int>(names.size()))
@@ -259,23 +263,36 @@ auto read_site_genotypes(
     }
     const std::span<const int32_t> g(gt.data.get(), static_cast<size_t>(n_gt));
     size_t dosage = 0;
+    size_t n_called = 0;
     for (size_t k = 0; k < names.size(); ++k)
     {
-        const int d
+        const std::optional<int> d
             = allele1_dosage(g[2 * k], g[(2 * k) + 1], hdr, rec, names[k]);
-        if (d == 2)
+        if (!d)
         {
-            geno.set(k);
+            planes.missing.set(k);
+            continue;
         }
-        else if (d == 1)
+        if (*d == 2)
         {
-            het.set(k);
+            planes.geno.set(k);
         }
-        dosage += static_cast<size_t>(d);
+        else if (*d == 1)
+        {
+            planes.het.set(k);
+        }
+        dosage += static_cast<size_t>(*d);
+        ++n_called;
     }
-    geno.next_site();
-    het.next_site();
-    return dosage;
+    if (n_called == 0)
+    {
+        throw std::runtime_error(
+            std::format("{}: no parent is called", site_label(hdr, rec)));
+    }
+    planes.geno.next_site();
+    planes.het.next_site();
+    planes.missing.next_site();
+    return static_cast<float>(dosage) / static_cast<float>(2 * n_called);
 }
 }  // namespace
 
@@ -286,8 +303,10 @@ auto load_panel(const std::string& vcf_path, const PanelOptions& options)
     auto [file, hdr] = open_panel_vcf(vcf_path);
     std::vector<std::string> names = sample_names(hdr.get());
 
-    RowBuilder geno_rows(names.size());
-    RowBuilder het_rows(names.size());
+    PlaneBuilders planes{
+        RowBuilder(names.size()),
+        RowBuilder(names.size()),
+        RowBuilder(names.size())};
     SiteTable sites;
     size_t n_excluded_sites = 0;
     int current_rid = -1;
@@ -319,24 +338,26 @@ auto load_panel(const std::string& vcf_path, const PanelOptions& options)
 
         bcf_unpack(rec.get(), BCF_UN_STR);
         check_alleles(hdr.get(), rec.get());
-        const size_t dosage = read_site_genotypes(
-            hdr.get(), rec.get(), gt, names, geno_rows, het_rows);
+        const float freq1
+            = read_site_genotypes(hdr.get(), rec.get(), gt, names, planes);
         sites.add_site(
             rec->pos,
             encode_base(rec->d.allele[0][0]),
             encode_base(rec->d.allele[1][0]),
-            static_cast<float>(dosage) / static_cast<float>(2 * names.size()));
+            freq1);
     }
     counter->done();
     sites.finish();
 
-    BitRows geno = geno_rows.finish(sites.size());
-    BitRows het = het_rows.finish(sites.size());
+    BitRows geno = planes.geno.finish(sites.size());
+    BitRows het = planes.het.finish(sites.size());
+    BitRows missing = planes.missing.finish(sites.size());
     return Panel(
         std::move(sites),
         std::move(names),
         std::move(geno),
         std::move(het),
+        std::move(missing),
         options.duplicate_max_discordance,
         n_excluded_sites);
 }
@@ -346,12 +367,14 @@ Panel::Panel(
     std::vector<std::string> names,
     BitRows geno,
     BitRows het,
+    BitRows missing,
     double duplicate_max_discordance,
     size_t n_excluded_sites)
     : sites_(std::move(sites)),
       names_(std::move(names)),
       geno_(std::move(geno)),
       het_(std::move(het)),
+      missing_(std::move(missing)),
       n_excluded_sites_(n_excluded_sites)
 {
     if (geno_.rows() != names_.size())
@@ -381,9 +404,21 @@ Panel::Panel(
                 het_.rows(),
                 het_.n_bits()));
     }
+    if (missing_.rows() != geno_.rows() || missing_.n_bits() != geno_.n_bits())
+    {
+        throw std::logic_error(
+            std::format(
+                "Panel: genotype matrix is {} x {} but missing matrix is {} x "
+                "{}",
+                geno_.rows(),
+                geno_.n_bits(),
+                missing_.rows(),
+                missing_.n_bits()));
+    }
     for (size_t i = 0; i < names_.size(); ++i)
     {
         n_het_calls_ += popcount_rows(het_.row(i));
+        n_missing_calls_ += popcount_rows(missing_.row(i));
     }
 
     const auto max_diff = static_cast<size_t>(
@@ -392,8 +427,8 @@ Panel::Panel(
     {
         for (size_t j = i + 1; j < names_.size(); ++j)
         {
-            const size_t n_diff = popcount_discordant(
-                geno_.row(i), geno_.row(j), het_.row(i), het_.row(j));
+            const size_t n_diff
+                = popcount_discordant(parent_rows(i), parent_rows(j));
             if (n_diff <= max_diff)
             {
                 near_duplicates_.push_back(
