@@ -12,7 +12,8 @@ struct PileupStats
 {
     uint64_t reads_total = 0;         // records in the BAM
     uint64_t reads_used = 0;          // passed every read-level filter
-    uint64_t reads_skipped_flag = 0;  // unmapped/secondary/supplementary/...
+    uint64_t reads_unmapped = 0;      // flag 0x4
+    uint64_t reads_skipped_flag = 0;  // secondary/supplementary/QC fail/dup
     uint64_t reads_skipped_improper = 0;  // paired but not a proper pair
     uint64_t reads_skipped_mapq = 0;      // below --min-mapq or 255
     uint64_t reads_off_panel = 0;         // contig the panel has no sites on

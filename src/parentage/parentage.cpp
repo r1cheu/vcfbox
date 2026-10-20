@@ -4,9 +4,11 @@
 #include <exception>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <optional>
+#include <ostream>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -15,6 +17,8 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+#include <barkeep.h>
 
 #include "common/lines.h"
 #include "common/strings.h"
@@ -31,9 +35,9 @@ namespace vcfbox::parentage
 {
 namespace
 {
-auto print_panel_summary(const Panel& panel) -> void
+auto print_panel_summary(std::ostream& out, const Panel& panel) -> void
 {
-    std::cerr << std::format(
+    out << std::format(
         "Panel: {} parents, {} sites on {} contigs{}, {} heterozygous and {} "
         "missing calls\n",
         panel.n_parents(),
@@ -47,7 +51,7 @@ auto print_panel_summary(const Panel& panel) -> void
 
     for (const auto& dup : panel.near_duplicates())
     {
-        std::cerr << std::format(
+        out << std::format(
             "Warning: parents {} and {} differ at only {} of {} sites where "
             "both are homozygous; "
             "samples derived from either will be AMBIGUOUS\n",
@@ -65,18 +69,21 @@ struct ObtainedCounts
     std::string origin;  // "pileup" or "counts file"
 };
 
-auto print_sample_summary(const SampleCounts& counts, const std::string& origin)
-    -> void
+auto print_sample_summary(
+    std::ostream& out,
+    const SampleCounts& counts,
+    const std::string& origin) -> void
 {
     const PileupStats& stats = counts.stats();
-    std::cerr << std::format(
-        "Sample {} ({}): {} of {} reads used ({} flag, {} improper pair, {} "
-        "MAPQ, {} off-panel skipped); {} of {} sites covered, mean depth "
-        "{:.3f}; {} bases below baseQ\n",
+    out << std::format(
+        "Sample {} ({}): {} of {} reads used ({} unmapped, {} flag, {} "
+        "improper pair, {} MAPQ, {} off-panel skipped); {} of {} sites "
+        "covered, mean depth {:.3f}; {} bases below baseQ\n",
         counts.sample(),
         origin,
         stats.reads_used,
         stats.reads_total,
+        stats.reads_unmapped,
         stats.reads_skipped_flag,
         stats.reads_skipped_improper,
         stats.reads_skipped_mapq,
@@ -86,6 +93,14 @@ auto print_sample_summary(const SampleCounts& counts, const std::string& origin)
         static_cast<double>(counts.bases_used())
             / static_cast<double>(counts.n_sites()),
         stats.bases_skipped_baseq);
+}
+
+// Whether more than `max_rate` of the sample's reads are unmapped.
+auto mostly_unmapped(const SampleCounts& counts, double max_rate) -> bool
+{
+    const PileupStats& stats = counts.stats();
+    return static_cast<double>(stats.reads_unmapped)
+           > max_rate * static_cast<double>(stats.reads_total);
 }
 
 auto sample_name_from_path(const std::string& path) -> std::string
@@ -120,7 +135,10 @@ auto obtain_counts(
 }
 
 // Processes the samples on `options.threads` workers, each taking the next
-// unprocessed sample, and adds them to `report` in completion order. The
+// unprocessed sample, and adds them to `report` and their summaries to `log`
+// in completion order, with a progress bar on stdout. A sample with more than
+// `options.max_unmapped_rate` of its reads unmapped is not scored; it is
+// logged as dropped and counted by `report.add_dropped()`. The
 // first exception thrown by a worker stops the others after their current
 // sample and is rethrown here.
 auto process_samples(
@@ -130,8 +148,16 @@ auto process_samples(
     const RunOptions& options,
     const PileupOptions& pileup_options,
     const ScoreOptions& score_options,
-    ReportWriter& report) -> void
+    ReportWriter& report,
+    std::ostream& log) -> void
 {
+    std::atomic<size_t> done = 0;
+    auto bar = barkeep::ProgressBar(
+        &done,
+        {.total = bams.size(),
+         .message = "Samples",
+         .speed = 1.,
+         .speed_unit = "sample/s"});
     std::atomic<size_t> next = 0;
     std::atomic<bool> failed = false;
     std::mutex output_mutex;
@@ -144,6 +170,21 @@ auto process_samples(
             {
                 const ObtainedCounts obtained = obtain_counts(
                     bams[i], panel.sites(), options, pileup_options);
+                if (mostly_unmapped(obtained.counts, options.max_unmapped_rate))
+                {
+                    const std::lock_guard lock(output_mutex);
+                    print_sample_summary(
+                        log, obtained.counts, obtained.origin);
+                    log << std::format(
+                        "Sample {} dropped: {} of {} reads unmapped\n",
+                        bams[i].sample,
+                        obtained.counts.stats().reads_unmapped,
+                        obtained.counts.stats().reads_total);
+                    log.flush();
+                    report.add_dropped();
+                    ++done;
+                    continue;
+                }
                 const auto found = expected.find(bams[i].sample);
                 const ExpectedParents* parents
                     = found == expected.end() ? nullptr : &found->second;
@@ -153,8 +194,10 @@ auto process_samples(
                     score_options,
                     parents == nullptr ? std::nullopt : parents->pair);
                 const std::lock_guard lock(output_mutex);
-                print_sample_summary(obtained.counts, obtained.origin);
+                print_sample_summary(log, obtained.counts, obtained.origin);
+                log.flush();
                 report.add(obtained.counts, scores, parents);
+                ++done;
             }
         }
         catch (...)
@@ -171,6 +214,7 @@ auto process_samples(
             workers.emplace_back(worker, t);
         }
     }
+    bar->done();
     for (const std::exception_ptr& error : errors)
     {
         if (error)
@@ -229,7 +273,7 @@ auto run(const RunOptions& options) -> void
     panel_options.duplicate_max_discordance = options.duplicate_max_discordance;
 
     const Panel panel = load_panel(options.vcf_path, panel_options);
-    print_panel_summary(panel);
+    print_panel_summary(std::cerr, panel);
 
     if (options.bams_path.empty())
     {
@@ -260,11 +304,17 @@ auto run(const RunOptions& options) -> void
     pileup_options.min_mapq = options.min_mapq;
     pileup_options.min_baseq = options.min_baseq;
     pileup_options.dedup_overlaps = !options.keep_overlaps;
-    pileup_options.progress = options.threads == 1;
     ScoreOptions score_options;
     score_options.error_rate = options.error_rate;
     score_options.top = options.top;
     score_options.candidates = options.candidates;
+    const std::string log_path = std::format("{}.log", options.output_prefix);
+    std::ofstream log(log_path);
+    if (!log)
+    {
+        throw std::runtime_error(std::format("cannot write {}", log_path));
+    }
+    print_panel_summary(log, panel);
     ReportWriter report = open_report(
         options.output_prefix,
         panel.names(),
@@ -277,7 +327,8 @@ auto run(const RunOptions& options) -> void
         options,
         pileup_options,
         score_options,
-        report);
+        report,
+        log);
     report.finish();
 }
 }  // namespace vcfbox::parentage

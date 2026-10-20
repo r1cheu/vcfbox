@@ -127,7 +127,10 @@ class ReportWriter
         const SampleScores& scores,
         const ExpectedParents* expected) -> void;
 
-    // Writes the status counts, the fit counts of TWO_PARENT samples, and the
+    // Counts a sample left out of the tables, reported in the summary.
+    auto add_dropped() -> void { ++n_dropped_; }
+
+    // Writes the dropped count, the status counts, the fit counts of TWO_PARENT samples, and the
     // expected-status counts when expected pairs were given. Throws when a file cannot be written.
     auto finish() -> void;
 
@@ -157,7 +160,8 @@ class ReportWriter
     CallOptions options_;
     std::array<std::ofstream, all_statuses.size()> tables_;  // by Status
     std::ofstream topk_;
-    size_t n_samples_ = 0;
+    size_t n_samples_ = 0;  // scored
+    size_t n_dropped_ = 0;
     // (status, expected_status) -> samples
     std::map<std::pair<std::string_view, std::string_view>, size_t> tally_;
     std::map<std::string_view, size_t> fits_;  // of TWO_PARENT samples

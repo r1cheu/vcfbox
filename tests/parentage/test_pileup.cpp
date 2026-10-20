@@ -146,7 +146,8 @@ TEST_CASE("pileup_bam skips reads by flag and MAPQ", "[parentage][pileup]")
         sam.reads = {read};
         const SampleCounts counts = run(files, sam);
         REQUIRE(counts.bases_used() == 0);
-        REQUIRE(counts.stats().reads_skipped_flag == 1);
+        REQUIRE(counts.stats().reads_unmapped == 1);
+        REQUIRE(counts.stats().reads_skipped_flag == 0);
     }
     SECTION("secondary")
     {

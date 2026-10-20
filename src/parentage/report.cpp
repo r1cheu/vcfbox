@@ -504,7 +504,10 @@ auto ReportWriter::finish() -> void
     }
     const std::string path = std::format("{}.summary.txt", prefix_);
     std::ofstream out = open_output(path);
-    out << std::format("samples\t{}\n\nstatus\tsamples\n", n_samples_);
+    out << std::format(
+        "samples\t{}\ndropped\t{}\n\nstatus\tsamples\n",
+        n_samples_,
+        n_dropped_);
     for (const Status call : all_statuses)
     {
         out << std::format(

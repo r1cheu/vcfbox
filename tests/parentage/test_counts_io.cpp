@@ -27,6 +27,7 @@ TEST_CASE("counts file round-trips every field", "[parentage][counts_io]")
     counts.add_other(4);
     counts.stats().reads_total = 10;
     counts.stats().reads_used = 7;
+    counts.stats().reads_unmapped = 5;
     counts.stats().reads_skipped_flag = 1;
     counts.stats().reads_skipped_improper = 6;
     counts.stats().reads_skipped_mapq = 2;
@@ -49,6 +50,7 @@ TEST_CASE("counts file round-trips every field", "[parentage][counts_io]")
         == std::vector<uint8_t>{0, 0, 0, 0, 1});
     REQUIRE(back.stats().reads_total == 10);
     REQUIRE(back.stats().reads_used == 7);
+    REQUIRE(back.stats().reads_unmapped == 5);
     REQUIRE(back.stats().reads_skipped_flag == 1);
     REQUIRE(back.stats().reads_skipped_improper == 6);
     REQUIRE(back.stats().reads_skipped_mapq == 2);
@@ -89,10 +91,16 @@ TEST_CASE(
             read_counts(files.create_text_file("hello world"), 5),
             ContainsSubstring("is not a vcfbox counts file"));
     }
-    SECTION("truncated after the magic")
+    SECTION("previous format")
     {
         REQUIRE_THROWS_WITH(
             read_counts(files.create_text_file("VBXCNT01"), 5),
+            ContainsSubstring("delete it to pile up the BAM again"));
+    }
+    SECTION("truncated after the magic")
+    {
+        REQUIRE_THROWS_WITH(
+            read_counts(files.create_text_file("VBXCNT02"), 5),
             ContainsSubstring("is truncated"));
     }
     SECTION("file does not exist")

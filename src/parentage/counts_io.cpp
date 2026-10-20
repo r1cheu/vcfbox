@@ -23,8 +23,9 @@ namespace vcfbox::parentage
 {
 namespace
 {
-constexpr std::string_view magic = "VBXCNT01";
-constexpr size_t n_stat_fields = 7;
+constexpr std::string_view magic = "VBXCNT02";
+constexpr std::string_view previous_magic = "VBXCNT01";
+constexpr size_t n_stat_fields = 8;
 
 auto stats_to_array(const PileupStats& stats)
     -> std::array<uint64_t, n_stat_fields>
@@ -32,6 +33,7 @@ auto stats_to_array(const PileupStats& stats)
     return {
         stats.reads_total,
         stats.reads_used,
+        stats.reads_unmapped,
         stats.reads_skipped_flag,
         stats.reads_skipped_improper,
         stats.reads_skipped_mapq,
@@ -45,11 +47,12 @@ auto stats_from_array(const std::array<uint64_t, n_stat_fields>& fields)
     PileupStats stats;
     stats.reads_total = fields[0];
     stats.reads_used = fields[1];
-    stats.reads_skipped_flag = fields[2];
-    stats.reads_skipped_improper = fields[3];
-    stats.reads_skipped_mapq = fields[4];
-    stats.reads_off_panel = fields[5];
-    stats.bases_skipped_baseq = fields[6];
+    stats.reads_unmapped = fields[2];
+    stats.reads_skipped_flag = fields[3];
+    stats.reads_skipped_improper = fields[4];
+    stats.reads_skipped_mapq = fields[5];
+    stats.reads_off_panel = fields[6];
+    stats.bases_skipped_baseq = fields[7];
     return stats;
 }
 
@@ -176,7 +179,16 @@ auto read_counts(const std::string& path, size_t expected_n_sites)
     -> SampleCounts
 {
     Reader in(path);
-    if (in.text(magic.size()) != magic)
+    const std::string file_magic = in.text(magic.size());
+    if (file_magic == previous_magic)
+    {
+        throw std::runtime_error(
+            std::format(
+                "{} is in the previous counts format, without the unmapped "
+                "read count; delete it to pile up the BAM again",
+                path));
+    }
+    if (file_magic != magic)
     {
         throw std::runtime_error(
             std::format("{} is not a vcfbox counts file", path));

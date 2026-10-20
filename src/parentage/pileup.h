@@ -13,7 +13,6 @@ struct PileupOptions
     int min_baseq = 20;
     // Count a base once when both mates of a pair cover the same site.
     bool dedup_overlaps = true;
-    bool progress = true;  // show a read counter on stderr
 };
 
 // Scans the whole BAM sequentially (no index) and counts, at every panel

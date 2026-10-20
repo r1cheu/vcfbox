@@ -79,6 +79,13 @@ auto add_parentage_command(CLI::App& app, ParentageOptions& options)
         ->capture_default_str();
     command
         ->add_option(
+            "--max-unmapped-rate",
+            options.max_unmapped_rate,
+            "Fraction of a sample's reads unmapped above which the sample is "
+            "dropped without scoring")
+        ->capture_default_str();
+    command
+        ->add_option(
             "--max-hom-mismatch",
             options.max_hom_mismatch,
             "fit FAIL above this best-pair hom_mismatch_rate")
@@ -110,6 +117,7 @@ auto run_parentage_command(const ParentageOptions& options) -> void
     run_options.top = options.top;
     run_options.candidates = options.candidates;
     run_options.threads = options.threads;
+    run_options.max_unmapped_rate = options.max_unmapped_rate;
     run_options.call.max_hom_mismatch = options.max_hom_mismatch;
     run_options.call.min_lod = options.min_lod;
     parentage::run(run_options);

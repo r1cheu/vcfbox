@@ -9,7 +9,6 @@
 #include <utility>
 #include <vector>
 
-#include "common/progress.h"
 #include "hts/hts_raii.h"
 
 extern "C"
@@ -22,7 +21,7 @@ namespace vcfbox::parentage
 namespace
 {
 constexpr uint16_t skip_flags
-    = BAM_FUNMAP | BAM_FSECONDARY | BAM_FSUPPLEMENTARY | BAM_FQCFAIL | BAM_FDUP;
+    = BAM_FSECONDARY | BAM_FSUPPLEMENTARY | BAM_FQCFAIL | BAM_FDUP;
 constexpr int mapq_unavailable = 255;
 constexpr int max_depth = 8000;  // samtools mpileup default (-d)
 
@@ -87,7 +86,6 @@ struct ReadSource
     const PileupOptions* options = nullptr;
     std::span<const int> contig_of_tid;
     PileupStats* stats = nullptr;
-    size_t* processed = nullptr;
     int prev_tid = -1;
     int64_t prev_pos = -1;
     std::exception_ptr error;
@@ -117,6 +115,11 @@ auto passes_read_filters(ReadSource& src, const bam1_t* rec) -> bool
 {
     const auto flag = rec->core.flag;
     PileupStats& stats = *src.stats;
+    if ((flag & BAM_FUNMAP) != 0)
+    {
+        ++stats.reads_unmapped;
+        return false;
+    }
     if ((flag & skip_flags) != 0)
     {
         ++stats.reads_skipped_flag;
@@ -159,13 +162,12 @@ auto next_read(void* data, bam1_t* rec) -> int
                     std::format(
                         "{}: error while reading record {}",
                         *src.bam_path,
-                        *src.processed + 1));
+                        src.stats->reads_total + 1));
             }
             if (ret < 0)
             {
                 return ret;
             }
-            ++*src.processed;
             ++src.stats->reads_total;
             if (passes_read_filters(src, rec))
             {
@@ -228,13 +230,6 @@ auto pileup_bam(
         = panel_contig_of_tid(sites, hdr.get(), bam_path);
 
     SampleCounts counts(sample, sites.size());
-    size_t processed = 0;
-    auto counter
-        = create_counter(std::format("Pileup {}", sample), processed, "read/s");
-    if (options.progress)
-    {
-        counter->show();
-    }
 
     ReadSource src;
     src.file = file.get();
@@ -243,7 +238,6 @@ auto pileup_bam(
     src.options = &options;
     src.contig_of_tid = contig_of_tid;
     src.stats = &counts.stats();
-    src.processed = &processed;
     void* data = &src;
 
     bam_mplp_ptr iter(bam_mplp_init(1, next_read, &data));
@@ -290,10 +284,6 @@ auto pileup_bam(
     if (src.error)
     {
         std::rethrow_exception(src.error);
-    }
-    if (options.progress)
-    {
-        counter->done();
     }
     return counts;
 }

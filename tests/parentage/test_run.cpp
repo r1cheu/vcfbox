@@ -23,6 +23,7 @@ using vcfbox::parentage::SampleCounts;
 using vcfbox::test::FileFixture;
 using vcfbox::test::PanelVcf;
 using vcfbox::test::repeated_sites;
+using vcfbox::test::repeated_reads;
 using vcfbox::test::SamFile;
 using vcfbox::test::SamRead;
 
@@ -36,6 +37,19 @@ auto allele0_sam(int n) -> std::string
         = {{.cigar = std::format("{}M", n),
             .seq = std::string(static_cast<size_t>(n), 'A'),
             .qual = std::string(static_cast<size_t>(n), 'I')}};
+    return sam.text();
+}
+
+// One allele0 read of 3 bases from chr01:1 followed by `n_unmapped` unmapped
+// reads.
+auto partly_unmapped_sam(int n_unmapped) -> std::string
+{
+    SamFile sam;
+    sam.reads = repeated_reads(
+        {.qname = "u", .flag = 0x4, .cigar = "*", .seq = "A", .qual = "I"},
+        n_unmapped);
+    sam.reads.insert(
+        sam.reads.begin(), {.cigar = "3M", .seq = "AAA", .qual = "III"});
     return sam.text();
 }
 
@@ -87,6 +101,23 @@ TEST_CASE(
             3);
         REQUIRE(n0_of(a) == std::vector<uint8_t>{1, 1, 1});
         REQUIRE(n0_of(b) == std::vector<uint8_t>{1, 1, 0});
+    }
+    SECTION("writes the panel and every sample summary to the log")
+    {
+        options.bams_path = files.create_text_file(
+            std::format("A\t{}\nB\t{}\n", sam_a.string(), sam_b.string()));
+
+        run(options);
+
+        const std::string log
+            = file_text(std::format("{}.log", options.output_prefix));
+        REQUIRE_THAT(log, ContainsSubstring("Panel: 3 parents, 3 sites"));
+        REQUIRE_THAT(
+            log,
+            ContainsSubstring("Sample A (pileup): 1 of 1 reads used"));
+        REQUIRE_THAT(
+            log,
+            ContainsSubstring("Sample B (pileup): 1 of 1 reads used"));
     }
     SECTION("a failing sample fails the run")
     {
@@ -178,5 +209,62 @@ TEST_CASE(
         REQUIRE_THAT(summary, ContainsSubstring("\nPASS\t0\n"));
         REQUIRE_THAT(
             summary, ContainsSubstring("\nAMBIGUOUS\t0\t1\t1\t0\n"));
+    }
+}
+
+TEST_CASE(
+    "run drops a sample with more than max_unmapped_rate of reads unmapped",
+    "[parentage][run]")
+{
+    // A has 1 of 2 reads unmapped, at the rate; B has 2 of 3, above it.
+    FileFixture files;
+    PanelVcf panel;
+    panel.sites = repeated_sites("chr01", 3, {"0/0", "1/1", "0/0"});
+    RunOptions options;
+    options.vcf_path = files.create_text_file(panel.text(), ".vcf");
+    options.bams_path = files.create_text_file(
+        std::format(
+            "A\t{}\nB\t{}\n",
+            files.create_text_file(partly_unmapped_sam(1), ".sam").string(),
+            files.create_text_file(partly_unmapped_sam(2), ".sam").string()));
+    options.output_prefix = files.missing_path("").string();
+    options.max_unmapped_rate = 0.5;
+
+    run(options);
+
+    SECTION("scores the sample at the rate and leaves the other out")
+    {
+        const std::string topk
+            = file_text(options.output_prefix + ".topk.tsv");
+        CAPTURE(topk);
+        REQUIRE_THAT(topk, ContainsSubstring("\nA\t"));
+        REQUIRE_THAT(topk, !ContainsSubstring("\nB\t"));
+    }
+    SECTION("writes the dropped sample to no status table")
+    {
+        REQUIRE_THAT(
+            file_text(options.output_prefix + ".two_parent.tsv"),
+            !ContainsSubstring("\nB\t"));
+        REQUIRE_THAT(
+            file_text(options.output_prefix + ".one_parent.tsv"),
+            !ContainsSubstring("\nB\t"));
+        REQUIRE_THAT(
+            file_text(options.output_prefix + ".zero_parent.tsv"),
+            !ContainsSubstring("\nB\t"));
+        REQUIRE_THAT(
+            file_text(options.output_prefix + ".ambiguous.tsv"),
+            !ContainsSubstring("\nB\t"));
+    }
+    SECTION("logs the dropped sample with its unmapped reads")
+    {
+        REQUIRE_THAT(
+            file_text(std::format("{}.log", options.output_prefix)),
+            ContainsSubstring("Sample B dropped: 2 of 3 reads unmapped"));
+    }
+    SECTION("counts scored and dropped samples in the summary")
+    {
+        REQUIRE_THAT(
+            file_text(options.output_prefix + ".summary.txt"),
+            ContainsSubstring("samples\t1\ndropped\t1\n"));
     }
 }
