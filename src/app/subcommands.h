@@ -27,6 +27,8 @@ struct ParentageOptions
     std::string exclude_sites_path;
     double duplicate_max_discordance = 0.001;
     std::string bams_path;
+    std::string output_prefix;
+    std::string expected_path;
     std::string counts_dir;
     int min_mapq = 20;
     int min_baseq = 20;
@@ -35,6 +37,8 @@ struct ParentageOptions
     size_t top = 10;
     size_t candidates = 20;
     size_t threads = 1;
+    double max_hom_mismatch = 0.03;
+    double min_lod = 50;
 };
 
 CLI::App* add_parentage_command(CLI::App& app, ParentageOptions& options);

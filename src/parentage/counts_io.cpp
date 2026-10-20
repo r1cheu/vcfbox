@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <span>
 #include <stdexcept>
@@ -87,6 +88,16 @@ class Writer
         bytes(std::span(reinterpret_cast<const uint8_t*>(s.data()), s.size()));
     }
 
+    // Flushes and closes the file; throws when that fails.
+    auto close() -> void
+    {
+        if (bgzf_close(file_.release()) != 0)
+        {
+            throw std::runtime_error(
+                std::format("Failed to write counts file {}", path_));
+        }
+    }
+
    private:
     std::string path_;
     bgzf_ptr file_;
@@ -144,7 +155,8 @@ class Reader
 
 auto write_counts(const SampleCounts& counts, const std::string& path) -> void
 {
-    Writer out(path);
+    const std::string partial = std::format("{}.partial", path);
+    Writer out(partial);
     out.text(magic);
     out.u64(counts.sample().size());
     out.text(counts.sample());
@@ -156,6 +168,8 @@ auto write_counts(const SampleCounts& counts, const std::string& path) -> void
     out.bytes(counts.n0());
     out.bytes(counts.n1());
     out.bytes(counts.n_other());
+    out.close();
+    std::filesystem::rename(partial, path);
 }
 
 auto read_counts(const std::string& path, size_t expected_n_sites)

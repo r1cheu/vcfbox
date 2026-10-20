@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,7 @@ using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::WithinAbs;
 using vcfbox::parentage::BitRows;
 using vcfbox::parentage::Panel;
+using vcfbox::parentage::ParentPair;
 using vcfbox::parentage::SampleCounts;
 using vcfbox::parentage::SampleScores;
 using vcfbox::parentage::score_sample;
@@ -109,32 +111,32 @@ TEST_CASE("score_sample splits reads by parent pair", "[parentage][score]")
     const SampleScores scores = three_parent_scores();
 
     REQUIRE(scores.n_covered == 4);
-    REQUIRE(scores.pairs.size() == 6);
+    REQUIRE(scores.top.size() == 6);
 
-    SECTION("ranks pairs by score, ties by index")
+    SECTION("ranks pairs by lod_vs_null, ties by index")
     {
-        REQUIRE(scores.pairs[0].a == 0);
-        REQUIRE(scores.pairs[0].b == 2);
-        REQUIRE(scores.pairs[0].score == 2049);
-        REQUIRE(scores.pairs[1].a == 0);
-        REQUIRE(scores.pairs[1].b == 1);
-        REQUIRE(scores.pairs[1].score == -1180);
-        REQUIRE(scores.pairs[2].a == 0);
-        REQUIRE(scores.pairs[2].b == 0);
-        REQUIRE(scores.pairs[2].score == -3726);
-        REQUIRE(scores.pairs[3].a == 1);
-        REQUIRE(scores.pairs[3].b == 2);
-        REQUIRE(scores.pairs[3].score == -5092);
-        REQUIRE(scores.pairs[4].a == 1);
-        REQUIRE(scores.pairs[4].b == 1);
-        REQUIRE(scores.pairs[4].score == -8321);
-        REQUIRE(scores.pairs[5].a == 2);
-        REQUIRE(scores.pairs[5].b == 2);
-        REQUIRE(scores.pairs[5].score == -8321);
+        REQUIRE(scores.top[0].stats.a == 0);
+        REQUIRE(scores.top[0].stats.b == 2);
+        REQUIRE_THAT(scores.top[0].lod_vs_null, WithinAbs(0.60753, 1e-4));
+        REQUIRE(scores.top[1].stats.a == 0);
+        REQUIRE(scores.top[1].stats.b == 1);
+        REQUIRE_THAT(scores.top[1].lod_vs_null, WithinAbs(-2.62140, 1e-4));
+        REQUIRE(scores.top[2].stats.a == 0);
+        REQUIRE(scores.top[2].stats.b == 0);
+        REQUIRE_THAT(scores.top[2].lod_vs_null, WithinAbs(-5.16723, 1e-4));
+        REQUIRE(scores.top[3].stats.a == 1);
+        REQUIRE(scores.top[3].stats.b == 2);
+        REQUIRE_THAT(scores.top[3].lod_vs_null, WithinAbs(-6.53342, 1e-4));
+        REQUIRE(scores.top[4].stats.a == 1);
+        REQUIRE(scores.top[4].stats.b == 1);
+        REQUIRE_THAT(scores.top[4].lod_vs_null, WithinAbs(-9.76235, 1e-4));
+        REQUIRE(scores.top[5].stats.a == 2);
+        REQUIRE(scores.top[5].stats.b == 2);
+        REQUIRE_THAT(scores.top[5].lod_vs_null, WithinAbs(-9.76235, 1e-4));
     }
     SECTION("counts of a mixed pair")
     {
-        const auto& p13 = scores.pairs[0];
+        const auto& p13 = scores.top[0].stats;
         REQUIRE(p13.hom_conc == 3);
         REQUIRE(p13.hom_disc == 0);
         REQUIRE(p13.het_0 == 3);
@@ -142,22 +144,19 @@ TEST_CASE("score_sample splits reads by parent pair", "[parentage][score]")
     }
     SECTION("counts of a selfing pair have no heterozygous sites")
     {
-        const auto& p22 = scores.pairs[4];
+        const auto& p22 = scores.top[4].stats;
         REQUIRE(p22.hom_conc == 5);
         REQUIRE(p22.hom_disc == 3);
         REQUIRE(p22.het_0 == 0);
         REQUIRE(p22.het_1 == 0);
         REQUIRE(std::isnan(scores.top[4].het_alt_fraction));
     }
-    SECTION("float statistics of the top pairs")
+    SECTION("rates of the top pairs and the lod to the second")
     {
-        REQUIRE(scores.top.size() == 6);
-        REQUIRE_THAT(scores.top[0].lod_vs_null, WithinAbs(0.60753, 1e-4));
-        REQUIRE_THAT(scores.top[1].lod_vs_null, WithinAbs(-2.62140, 1e-4));
         REQUIRE_THAT(scores.top[0].hom_mismatch_rate, WithinAbs(0.0, 1e-12));
         REQUIRE_THAT(scores.top[0].het_alt_fraction, WithinAbs(0.4, 1e-12));
         REQUIRE_THAT(scores.top[1].hom_mismatch_rate, WithinAbs(0.2, 1e-12));
-        REQUIRE_THAT(scores.lod_vs_second, WithinAbs(3.229, 1e-12));
+        REQUIRE_THAT(scores.lod_vs_second, WithinAbs(3.22893, 1e-4));
     }
     SECTION("single-parent model")
     {
@@ -177,13 +176,17 @@ TEST_CASE("score_sample splits reads by parent pair", "[parentage][score]")
 }
 
 // As above, but P2 is heterozygous at site 2 (allele1 dosage 3 of 6).
-auto het_parent_scores() -> SampleScores
+auto het_parent_scores(std::optional<ParentPair> expected = std::nullopt)
+    -> SampleScores
 {
     const Panel panel = make_panel(
         {4.0F / 6, 4.0F / 6, 3.0F / 6, 2.0F / 6, 0, 0},
         {"000000", "11h000", "111100"});
     return score_sample(
-        panel, make_counts({2, 0, 1, 0, 3, 0}, {0, 1, 1, 0, 0, 0}), {});
+        panel,
+        make_counts({2, 0, 1, 0, 3, 0}, {0, 1, 1, 0, 0, 0}),
+        {},
+        expected);
 }
 
 TEST_CASE(
@@ -194,25 +197,27 @@ TEST_CASE(
 
     SECTION("the site counts for neither pair of the parent")
     {
-        // (P1,P2) and (P1,P3) tie at 2049; (P1,P2) first by index.
-        const auto& p12 = scores.pairs[0];
+        const auto& p12 = scores.top[1].stats;
         REQUIRE(p12.a == 0);
         REQUIRE(p12.b == 1);
         REQUIRE(p12.hom_conc == 3);
         REQUIRE(p12.hom_disc == 0);
         REQUIRE(p12.het_0 == 2);
         REQUIRE(p12.het_1 == 1);
-        REQUIRE(p12.score == 2049);
-        const auto& p22 = scores.pairs[3];
-        REQUIRE(p22.a == 1);
-        REQUIRE(p22.b == 1);
+        const SampleScores with_p22 = het_parent_scores(ParentPair{1, 1});
+        const auto& p22 = with_p22.expected->report.stats;
         REQUIRE(p22.hom_conc == 4);
         REQUIRE(p22.hom_disc == 2);
     }
     SECTION("lod_vs_null adds the exact mixture at the uncertain site")
     {
-        REQUIRE_THAT(scores.top[0].lod_vs_null, WithinAbs(-0.15509, 1e-4));
-        REQUIRE_THAT(scores.top[1].lod_vs_null, WithinAbs(0.49922, 1e-4));
+        // (P1,P2) and (P1,P3) have the same counts outside site 2; the
+        // mixture there puts (P1,P3) first.
+        REQUIRE(scores.top[0].stats.a == 0);
+        REQUIRE(scores.top[0].stats.b == 2);
+        REQUIRE_THAT(scores.top[0].lod_vs_null, WithinAbs(0.49922, 1e-4));
+        REQUIRE_THAT(scores.top[1].lod_vs_null, WithinAbs(-0.15509, 1e-4));
+        REQUIRE_THAT(scores.lod_vs_second, WithinAbs(0.65431, 1e-4));
     }
     SECTION("single-parent model marginalises the heterozygous site")
     {
@@ -230,30 +235,29 @@ TEST_CASE(
     "score_sample uses the error rate as read weights",
     "[parentage][score]")
 {
-    const Panel panel = make_panel({0}, {"0"});
+    // One site at allele1 frequency 0.5 and one allele0 read: the null is
+    // ln 0.5, so P1 selfing scores ln(2(1-e)) and P2 selfing ln(2e).
+    const Panel panel = make_panel({0.5F}, {"0", "1"});
 
-    SECTION("a concordant read at e = 0.01 scores +683")
+    SECTION("e = 0.01 gives +0.683 / -3.912")
     {
         const SampleScores scores
             = score_sample(panel, make_counts({1}, {0}), {});
-        REQUIRE(scores.pairs[0].score == 683);
+        REQUIRE(scores.top[0].stats.a == 0);
+        REQUIRE(scores.top[0].stats.b == 0);
+        REQUIRE_THAT(scores.top[0].lod_vs_null, WithinAbs(0.68310, 1e-4));
+        REQUIRE(scores.top[2].stats.a == 1);
+        REQUIRE(scores.top[2].stats.b == 1);
+        REQUIRE_THAT(scores.top[2].lod_vs_null, WithinAbs(-3.91202, 1e-4));
     }
-    SECTION("a discordant read at e = 0.01 scores -3912")
-    {
-        const SampleScores scores
-            = score_sample(panel, make_counts({0}, {1}), {});
-        REQUIRE(scores.pairs[0].score == -3912);
-    }
-    SECTION("e = 0.1 gives +588 / -1609")
+    SECTION("e = 0.1 gives +0.588 / -1.609")
     {
         ScoreOptions options;
         options.error_rate = 0.1;
-        REQUIRE(
-            score_sample(panel, make_counts({1}, {0}), options).pairs[0].score
-            == 588);
-        REQUIRE(
-            score_sample(panel, make_counts({0}, {1}), options).pairs[0].score
-            == -1609);
+        const SampleScores scores
+            = score_sample(panel, make_counts({1}, {0}), options);
+        REQUIRE_THAT(scores.top[0].lod_vs_null, WithinAbs(0.58779, 1e-4));
+        REQUIRE_THAT(scores.top[2].lod_vs_null, WithinAbs(-1.60944, 1e-4));
     }
     SECTION("error rate outside (0, 0.5) is rejected")
     {
@@ -277,8 +281,8 @@ TEST_CASE(
         n0[64] = 1;
         const SampleScores scores = score_sample(
             panel, make_counts(n0, std::vector<uint8_t>(65, 0)), {});
-        REQUIRE(scores.pairs[0].hom_conc == 1);
-        REQUIRE(scores.pairs[0].hom_disc == 0);
+        REQUIRE(scores.top[0].stats.hom_conc == 1);
+        REQUIRE(scores.top[0].stats.hom_disc == 0);
         REQUIRE(scores.n_covered == 1);
     }
     SECTION("a word whose only counts are even is not skipped")
@@ -286,15 +290,15 @@ TEST_CASE(
         const Panel panel = make_panel({0}, {"0"});
         const SampleScores scores
             = score_sample(panel, make_counts({2}, {2}), {});
-        REQUIRE(scores.pairs[0].hom_conc == 2);
-        REQUIRE(scores.pairs[0].hom_disc == 2);
+        REQUIRE(scores.top[0].stats.hom_conc == 2);
+        REQUIRE(scores.top[0].stats.hom_disc == 2);
     }
     SECTION("a saturated count of 255 uses all eight planes")
     {
         const Panel panel = make_panel({0}, {"0"});
         const SampleScores scores
             = score_sample(panel, make_counts({255}, {0}), {});
-        REQUIRE(scores.pairs[0].hom_conc == 255);
+        REQUIRE(scores.top[0].stats.hom_conc == 255);
     }
     SECTION("a single pair has no second")
     {
@@ -323,18 +327,17 @@ TEST_CASE(
 
     SECTION("keeps every pair of the candidates, selfing included")
     {
-        REQUIRE(scores.pairs.size() == 3);
-        REQUIRE(scores.pairs[0].a == 0);
-        REQUIRE(scores.pairs[0].b == 2);
-        REQUIRE(scores.pairs[0].score == 2049);
-        REQUIRE(scores.pairs[1].a == 0);
-        REQUIRE(scores.pairs[1].b == 0);
-        REQUIRE(scores.pairs[2].a == 2);
-        REQUIRE(scores.pairs[2].b == 2);
+        REQUIRE(scores.top.size() == 3);
+        REQUIRE(scores.top[0].stats.a == 0);
+        REQUIRE(scores.top[0].stats.b == 2);
+        REQUIRE(scores.top[1].stats.a == 0);
+        REQUIRE(scores.top[1].stats.b == 0);
+        REQUIRE(scores.top[2].stats.a == 2);
+        REQUIRE(scores.top[2].stats.b == 2);
     }
     SECTION("the second best is taken among the candidates")
     {
-        REQUIRE_THAT(scores.lod_vs_second, WithinAbs(5.775, 1e-9));
+        REQUIRE_THAT(scores.lod_vs_second, WithinAbs(5.77476, 1e-4));
     }
     SECTION("every single parent is still scored")
     {
@@ -343,12 +346,68 @@ TEST_CASE(
     SECTION("zero means every parent")
     {
         options.candidates = 0;
-        REQUIRE(three_parent_scores(options).pairs.size() == 6);
+        REQUIRE(three_parent_scores(options).top.size() == 6);
     }
     SECTION("more candidates than parents means every parent")
     {
         options.candidates = 50;
-        REQUIRE(three_parent_scores(options).pairs.size() == 6);
+        REQUIRE(three_parent_scores(options).top.size() == 6);
+    }
+}
+
+TEST_CASE(
+    "score_sample makes the expected parents candidates",
+    "[parentage][score]")
+{
+    // Candidates P1, P3; ranking over all parents (see the three-parent
+    // case): (0,2), (0,1), (0,0), (1,2), (1,1), (2,2).
+    const Panel panel = make_panel(
+        {2.0F / 3, 2.0F / 3, 1.0F / 3, 1.0F / 3, 0, 0},
+        {"000000", "110000", "111100"});
+    const SampleCounts counts
+        = make_counts({2, 0, 1, 0, 3, 0}, {0, 1, 1, 0, 0, 0});
+    ScoreOptions options;
+    options.candidates = 2;
+
+    SECTION("a candidate pair given in either order takes its rank")
+    {
+        const SampleScores scores
+            = score_sample(panel, counts, options, ParentPair{2, 0});
+        REQUIRE(scores.top.size() == 3);
+        REQUIRE(scores.expected->report.stats.a == 0);
+        REQUIRE(scores.expected->report.stats.b == 2);
+        REQUIRE(scores.expected->rank == 1);
+    }
+    SECTION("a parent outside the candidates is paired with them")
+    {
+        const SampleScores scores
+            = score_sample(panel, counts, options, ParentPair{0, 1});
+        REQUIRE(scores.top.size() == 6);
+        REQUIRE(scores.expected->rank == 2);
+        REQUIRE_THAT(
+            scores.expected->report.hom_mismatch_rate, WithinAbs(0.2, 1e-12));
+        REQUIRE_THAT(
+            scores.expected->report.lod_vs_null, WithinAbs(-2.62140, 1e-4));
+    }
+    SECTION("a tie is ranked by index")
+    {
+        const SampleScores scores
+            = score_sample(panel, counts, options, ParentPair{1, 1});
+        REQUIRE(scores.expected->rank == 5);
+    }
+    SECTION("an expected pair below the top pairs is ranked among every pair")
+    {
+        options.top = 2;
+        const SampleScores scores
+            = score_sample(panel, counts, options, ParentPair{1, 1});
+        REQUIRE(scores.top.size() == 2);
+        REQUIRE(scores.expected->rank == 5);
+        REQUIRE_THAT(
+            scores.expected->report.lod_vs_null, WithinAbs(-9.76235, 1e-4));
+    }
+    SECTION("no expected pair leaves it unset")
+    {
+        REQUIRE_FALSE(score_sample(panel, counts, options).expected);
     }
 }
 

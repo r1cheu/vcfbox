@@ -31,6 +31,7 @@ add_library(
   src/parentage/panel.cpp
   src/parentage/parentage.cpp
   src/parentage/pileup.cpp
+  src/parentage/report.cpp
   src/parentage/score.cpp
   src/parentage/sites.cpp
   src/common/line_writer.cpp

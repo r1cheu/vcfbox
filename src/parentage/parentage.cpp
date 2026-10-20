@@ -6,10 +6,12 @@
 #include <format>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -20,6 +22,7 @@
 #include "parentage/counts_io.h"
 #include "parentage/panel.h"
 #include "parentage/pileup.h"
+#include "parentage/report.h"
 #include "parentage/score.h"
 
 namespace fs = std::filesystem;
@@ -82,52 +85,6 @@ auto print_sample_summary(const SampleCounts& counts, const std::string& origin)
         stats.bases_skipped_baseq);
 }
 
-// Temporary stderr output; the TSV report replaces it.
-auto print_scores(
-    const Panel& panel,
-    const std::string& sample,
-    const SampleScores& scores) -> void
-{
-    const std::span<const std::string> names = panel.names();
-    const PairReport& best = scores.top.front();
-    const SingleStats& single = scores.singles.front();
-    std::cerr << std::format(
-        "Sample {}: {} covered sites; best {} x {} (lod_vs_null {:.1f}, "
-        "lod_vs_second {:.1f}, hom_mismatch {:.4f}, het_alt {:.3f}); best "
-        "single {} (lod_vs_null {:.1f}, allele_absent {:.4f})\n",
-        sample,
-        scores.n_covered,
-        names[best.stats.a],
-        names[best.stats.b],
-        best.lod_vs_null,
-        scores.lod_vs_second,
-        best.hom_mismatch_rate,
-        best.het_alt_fraction,
-        names[single.parent],
-        single.lod_vs_null,
-        single.allele_absent_rate);
-    std::cerr << "  rank\ta\tb\tscore\thom_conc\thom_disc\thet_0\thet_1\t"
-                 "lod_vs_null\thom_mismatch\thet_alt\n";
-    for (size_t rank = 0; rank < scores.top.size(); ++rank)
-    {
-        const PairReport& report = scores.top[rank];
-        const PairStats& st = report.stats;
-        std::cerr << std::format(
-            "  {}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.1f}\t{:.4f}\t{:.3f}\n",
-            rank + 1,
-            names[st.a],
-            names[st.b],
-            st.score,
-            st.hom_conc,
-            st.hom_disc,
-            st.het_0,
-            st.het_1,
-            report.lod_vs_null,
-            report.hom_mismatch_rate,
-            report.het_alt_fraction);
-    }
-}
-
 auto sample_name_from_path(const std::string& path) -> std::string
 {
     const fs::path p(path);
@@ -160,14 +117,17 @@ auto obtain_counts(
 }
 
 // Processes the samples on `options.threads` workers, each taking the next
-// unprocessed sample. The first exception thrown by a worker stops the
-// others after their current sample and is rethrown here.
+// unprocessed sample, and adds them to `report` in completion order. The
+// first exception thrown by a worker stops the others after their current
+// sample and is rethrown here.
 auto process_samples(
     const Panel& panel,
     std::span<const BamEntry> bams,
+    const std::unordered_map<std::string, ExpectedParents>& expected,
     const RunOptions& options,
     const PileupOptions& pileup_options,
-    const ScoreOptions& score_options) -> void
+    const ScoreOptions& score_options,
+    ReportWriter& report) -> void
 {
     std::atomic<size_t> next = 0;
     std::atomic<bool> failed = false;
@@ -181,11 +141,17 @@ auto process_samples(
             {
                 const ObtainedCounts obtained = obtain_counts(
                     bams[i], panel.sites(), options, pileup_options);
-                const SampleScores scores
-                    = score_sample(panel, obtained.counts, score_options);
+                const auto found = expected.find(bams[i].sample);
+                const ExpectedParents* parents
+                    = found == expected.end() ? nullptr : &found->second;
+                const SampleScores scores = score_sample(
+                    panel,
+                    obtained.counts,
+                    score_options,
+                    parents == nullptr ? std::nullopt : parents->pair);
                 const std::lock_guard lock(output_mutex);
                 print_sample_summary(obtained.counts, obtained.origin);
-                print_scores(panel, bams[i].sample, scores);
+                report.add(obtained.counts, scores, parents);
             }
         }
         catch (...)
@@ -266,15 +232,23 @@ auto run(const RunOptions& options) -> void
     {
         return;
     }
-    if (options.top == 0)
+    if (options.top < 2)
     {
-        throw std::runtime_error("--top must be at least 1");
+        throw std::runtime_error("--top must be at least 2");
     }
     if (options.threads == 0)
     {
         throw std::runtime_error("--threads must be at least 1");
     }
+    if (options.output_prefix.empty())
+    {
+        throw std::runtime_error("--output is required with --bams");
+    }
     const std::vector<BamEntry> bams = read_bam_list(options.bams_path);
+    const std::unordered_map<std::string, ExpectedParents> expected
+        = options.expected_path.empty()
+              ? std::unordered_map<std::string, ExpectedParents>{}
+              : read_expected_pairs(options.expected_path, panel.names());
     if (!options.counts_dir.empty())
     {
         fs::create_directories(options.counts_dir);
@@ -288,6 +262,19 @@ auto run(const RunOptions& options) -> void
     score_options.error_rate = options.error_rate;
     score_options.top = options.top;
     score_options.candidates = options.candidates;
-    process_samples(panel, bams, options, pileup_options, score_options);
+    ReportWriter report = open_report(
+        options.output_prefix,
+        panel.names(),
+        !options.expected_path.empty(),
+        options.call);
+    process_samples(
+        panel,
+        bams,
+        expected,
+        options,
+        pileup_options,
+        score_options,
+        report);
+    report.finish();
 }
 }  // namespace vcfbox::parentage

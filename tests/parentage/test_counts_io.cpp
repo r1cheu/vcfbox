@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -53,6 +54,19 @@ TEST_CASE("counts file round-trips every field", "[parentage][counts_io]")
     REQUIRE(back.stats().reads_skipped_mapq == 2);
     REQUIRE(back.stats().reads_off_panel == 3);
     REQUIRE(back.stats().bases_skipped_baseq == 4);
+}
+
+TEST_CASE(
+    "write_counts leaves only the finished file",
+    "[parentage][counts_io]")
+{
+    FileFixture files;
+    const std::string path = files.missing_path(".counts.gz");
+
+    write_counts(SampleCounts("SH1", 5), path);
+
+    REQUIRE(std::filesystem::exists(path));
+    REQUIRE_FALSE(std::filesystem::exists(path + ".partial"));
 }
 
 TEST_CASE(

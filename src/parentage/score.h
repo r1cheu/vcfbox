@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "parentage/counts.h"
@@ -12,7 +13,7 @@ namespace vcfbox::parentage
 struct ScoreOptions
 {
     double error_rate = 0.01;  // per-read probability of the wrong allele
-    size_t top = 10;           // pairs that receive the float statistics
+    size_t top = 10;           // best pairs kept in SampleScores::top
     // Parents with the best single-parent lod among which the pairs are
     // formed; 0 pairs every parent.
     size_t candidates = 20;
@@ -28,12 +29,9 @@ struct PairStats
     uint64_t hom_disc = 0;  // both parents carry the other allele
     uint64_t het_0 = 0;     // parents differ; read is allele0
     uint64_t het_1 = 0;     // parents differ; read is allele1
-    // 1000 * [ln L(pair) - ln L(every site heterozygous)], with the two
-    // per-read weights rounded to integers. Only the ranking uses it.
-    int64_t score = 0;
 };
 
-// Float statistics of one of the top pairs. Rates are NaN when their
+// Float statistics of a pair. Rates are NaN when their
 // denominator is 0; `het_alt_fraction` is therefore NaN for selfing.
 struct PairReport
 {
@@ -57,24 +55,42 @@ struct SingleStats
     double allele_absent_rate = 0;
 };
 
+// The expected pair of a sample and its rank among every scored pair
+// (1 = best).
+struct ExpectedScore
+{
+    PairReport report;
+    size_t rank = 0;
+};
+
 struct SampleScores
 {
     size_t n_covered = 0;  // sites with at least one allele0/allele1 read
-    // Every pair a <= b of the candidate parents, best first; ties broken
-    // by (a, b).
-    std::vector<PairStats> pairs;
-    // The first `ScoreOptions::top` entries of `pairs` with float statistics.
+    // The `ScoreOptions::top` best of the pairs a <= b of the candidate
+    // parents (plus the expected parents, when given), best lod_vs_null
+    // first; ties broken by (a, b).
     std::vector<PairReport> top;
-    // (pairs[0].score - pairs[1].score) / 1000; NaN with a single pair.
+    // lod_vs_null of the best pair minus that of the second; NaN with a
+    // single pair.
     double lod_vs_second = 0;
     // Every parent, best first; ties broken by index.
     std::vector<SingleStats> singles;
+    std::optional<ExpectedScore> expected;  // set when an expected pair is given
 };
 
-// Scores every parent pair and every single parent against the sample's
-// counts. Throws when the counts and the panel differ in site number.
+// Two parent indices; order does not matter.
+struct ParentPair
+{
+    uint32_t a = 0;
+    uint32_t b = 0;
+};
+
+// Scores every single parent and the pairs of the candidate parents against
+// the sample's counts. The parents of `expected` are always candidates. Throws when the counts and
+// the panel differ in site number.
 [[nodiscard]] auto score_sample(
     const Panel& panel,
     const SampleCounts& counts,
-    const ScoreOptions& options) -> SampleScores;
+    const ScoreOptions& options,
+    std::optional<ParentPair> expected = std::nullopt) -> SampleScores;
 }  // namespace vcfbox::parentage

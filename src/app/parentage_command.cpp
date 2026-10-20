@@ -35,6 +35,16 @@ auto add_parentage_command(CLI::App& app, ParentageOptions& options)
         options.bams_path,
         "List of BAMs: `sample<TAB>path` or `path` per line");
     command->add_option(
+        "-o,--output",
+        options.output_prefix,
+        "Output prefix of the per-status .<status>.tsv, .topk.tsv and "
+        ".summary.txt "
+        "files; required with --bams");
+    command->add_option(
+        "--expected",
+        options.expected_path,
+        "Expected pairs: `sample<TAB>mother<TAB>father` per line");
+    command->add_option(
         "--counts-dir",
         options.counts_dir,
         "Directory of per-sample counts files; existing ones skip the pileup");
@@ -67,6 +77,18 @@ auto add_parentage_command(CLI::App& app, ParentageOptions& options)
     command
         ->add_option("--threads", options.threads, "Samples processed at once")
         ->capture_default_str();
+    command
+        ->add_option(
+            "--max-hom-mismatch",
+            options.max_hom_mismatch,
+            "fit FAIL above this best-pair hom_mismatch_rate")
+        ->capture_default_str();
+    command
+        ->add_option(
+            "--min-lod",
+            options.min_lod,
+            "AMBIGUOUS when a model or parent margin is below this LOD")
+        ->capture_default_str();
 
     return command;
 }
@@ -78,6 +100,8 @@ auto run_parentage_command(const ParentageOptions& options) -> void
     run_options.exclude_sites_path = options.exclude_sites_path;
     run_options.duplicate_max_discordance = options.duplicate_max_discordance;
     run_options.bams_path = options.bams_path;
+    run_options.output_prefix = options.output_prefix;
+    run_options.expected_path = options.expected_path;
     run_options.counts_dir = options.counts_dir;
     run_options.min_mapq = options.min_mapq;
     run_options.min_baseq = options.min_baseq;
@@ -86,6 +110,8 @@ auto run_parentage_command(const ParentageOptions& options) -> void
     run_options.top = options.top;
     run_options.candidates = options.candidates;
     run_options.threads = options.threads;
+    run_options.call.max_hom_mismatch = options.max_hom_mismatch;
+    run_options.call.min_lod = options.min_lod;
     parentage::run(run_options);
 }
 }  // namespace vcfbox

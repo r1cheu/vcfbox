@@ -9,8 +9,10 @@
 #include <format>
 #include <initializer_list>
 #include <limits>
+#include <optional>
 #include <span>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "parentage/bitrows.h"
@@ -30,8 +32,6 @@ struct ReadWeights
     double conc;
     double disc;
     double het;
-    int64_t score_conc;  // round(1000 * (conc - het))
-    int64_t score_disc;  // round(1000 * (disc - het))
 };
 
 auto make_weights(double error_rate) -> ReadWeights
@@ -41,15 +41,7 @@ auto make_weights(double error_rate) -> ReadWeights
         throw std::runtime_error(
             std::format("error rate must be in (0, 0.5), got {}", error_rate));
     }
-    const double conc = std::log1p(-error_rate);
-    const double disc = std::log(error_rate);
-    const double het = std::log(0.5);
-    return {
-        conc,
-        disc,
-        het,
-        std::llround(1000 * (conc - het)),
-        std::llround(1000 * (disc - het))};
+    return {std::log1p(-error_rate), std::log(error_rate), std::log(0.5)};
 }
 
 // Log-likelihoods of one site's reads under the three F1 genotypes.
@@ -184,44 +176,6 @@ auto count_pair(
     return stats;
 }
 
-// Scores every pair of `parents` (ascending indices), including selfing.
-auto score_pairs(
-    const Panel& panel,
-    std::span<const uint32_t> parents,
-    const CountPlanes& planes,
-    const ReadWeights& weights) -> std::vector<PairStats>
-{
-    const size_t k = parents.size();
-    std::vector<PairStats> pairs;
-    pairs.reserve(k * (k + 1) / 2);
-    for (size_t i = 0; i < k; ++i)
-    {
-        const ParentRows pi = parent_rows(panel, parents[i]);
-        for (size_t j = i; j < k; ++j)
-        {
-            PairStats stats
-                = count_pair(pi, parent_rows(panel, parents[j]), planes);
-            stats.a = parents[i];
-            stats.b = parents[j];
-            stats.score
-                = weights.score_conc * static_cast<int64_t>(stats.hom_conc)
-                  + weights.score_disc * static_cast<int64_t>(stats.hom_disc);
-            pairs.push_back(stats);
-        }
-    }
-    std::ranges::sort(
-        pairs,
-        [](const PairStats& x, const PairStats& y)
-        {
-            if (x.score != y.score)
-            {
-                return x.score > y.score;
-            }
-            return x.a != y.a ? x.a < y.a : x.b < y.b;
-        });
-    return pairs;
-}
-
 // Per-site terms of the null and single-parent models (design §3.4), summed
 // where the parent genotype does not matter and kept per site where it does.
 struct SiteTerms
@@ -343,14 +297,20 @@ auto uncertain_log_likelihood(
     return sum;
 }
 
-auto make_report(
+auto score_pair(
     const Panel& panel,
-    const PairStats& stats,
+    uint32_t a,
+    uint32_t b,
     const CountPlanes& planes,
     const SampleCounts& counts,
     const ReadWeights& w,
     double null_sum) -> PairReport
 {
+    const ParentRows pa = parent_rows(panel, a);
+    const ParentRows pb = parent_rows(panel, b);
+    PairStats stats = count_pair(pa, pb, planes);
+    stats.a = a;
+    stats.b = b;
     // Over the sites where both parents are homozygous, Σ_s ln L(pair)
     // collapses to the four counts because every read contributes one of
     // three constants.
@@ -358,17 +318,47 @@ auto make_report(
         = w.conc * static_cast<double>(stats.hom_conc)
           + w.disc * static_cast<double>(stats.hom_disc)
           + w.het * static_cast<double>(stats.het_0 + stats.het_1)
-          + uncertain_log_likelihood(
-              parent_rows(panel, stats.a),
-              parent_rows(panel, stats.b),
-              planes,
-              counts,
-              w);
+          + uncertain_log_likelihood(pa, pb, planes, counts, w);
     return {
         stats,
         log_l - null_sum,
         ratio(stats.hom_disc, stats.hom_conc + stats.hom_disc),
         ratio(stats.het_1, stats.het_0 + stats.het_1)};
+}
+
+// Scores every pair of `parents` (ascending indices), including selfing;
+// best lod_vs_null first, ties broken by (a, b).
+auto score_pairs(
+    const Panel& panel,
+    std::span<const uint32_t> parents,
+    const CountPlanes& planes,
+    const SampleCounts& counts,
+    const ReadWeights& w,
+    double null_sum) -> std::vector<PairReport>
+{
+    const size_t k = parents.size();
+    std::vector<PairReport> pairs;
+    pairs.reserve(k * (k + 1) / 2);
+    for (size_t i = 0; i < k; ++i)
+    {
+        for (size_t j = i; j < k; ++j)
+        {
+            pairs.push_back(score_pair(
+                panel, parents[i], parents[j], planes, counts, w, null_sum));
+        }
+    }
+    std::ranges::sort(
+        pairs,
+        [](const PairReport& x, const PairReport& y)
+        {
+            if (x.lod_vs_null != y.lod_vs_null)
+            {
+                return x.lod_vs_null > y.lod_vs_null;
+            }
+            return x.stats.a != y.stats.a ? x.stats.a < y.stats.a
+                                          : x.stats.b < y.stats.b;
+        });
+    return pairs;
 }
 
 auto score_singles(const Panel& panel, const SiteTerms& terms)
@@ -440,7 +430,8 @@ auto candidate_parents(std::span<const SingleStats> singles, size_t n)
 auto score_sample(
     const Panel& panel,
     const SampleCounts& counts,
-    const ScoreOptions& options) -> SampleScores
+    const ScoreOptions& options,
+    std::optional<ParentPair> expected) -> SampleScores
 {
     if (counts.n_sites() != panel.n_sites())
     {
@@ -460,24 +451,34 @@ auto score_sample(
     SampleScores scores;
     scores.n_covered = terms.covered.size();
     scores.singles = score_singles(panel, terms);
-    scores.pairs = score_pairs(
-        panel,
-        candidate_parents(scores.singles, options.candidates),
-        planes,
-        weights);
-    const size_t n_top = std::min(options.top, scores.pairs.size());
-    scores.top.reserve(n_top);
-    for (size_t r = 0; r < n_top; ++r)
+    std::vector<uint32_t> parents
+        = candidate_parents(scores.singles, options.candidates);
+    if (expected)
     {
-        scores.top.push_back(make_report(
-            panel, scores.pairs[r], planes, counts, weights, terms.null_sum));
+        parents.push_back(expected->a);
+        parents.push_back(expected->b);
+        std::ranges::sort(parents);
+        const auto [first, last] = std::ranges::unique(parents);
+        parents.erase(first, last);
     }
-    scores.lod_vs_second
-        = scores.pairs.size() < 2
-              ? nan
-              : static_cast<double>(
-                    scores.pairs[0].score - scores.pairs[1].score)
-                    / 1000;
+    std::vector<PairReport> pairs
+        = score_pairs(panel, parents, planes, counts, weights, terms.null_sum);
+    scores.lod_vs_second = pairs.size() < 2
+                               ? nan
+                               : pairs[0].lod_vs_null - pairs[1].lod_vs_null;
+    if (expected)
+    {
+        const uint32_t a = std::min(expected->a, expected->b);
+        const uint32_t b = std::max(expected->a, expected->b);
+        const auto found = std::ranges::find_if(
+            pairs,
+            [&](const PairReport& p)
+            { return p.stats.a == a && p.stats.b == b; });
+        scores.expected = ExpectedScore{
+            *found, static_cast<size_t>(found - pairs.begin()) + 1};
+    }
+    pairs.resize(std::min(options.top, pairs.size()));
+    scores.top = std::move(pairs);
     return scores;
 }
 }  // namespace vcfbox::parentage
