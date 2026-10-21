@@ -54,7 +54,7 @@ auto print_panel_summary(std::ostream& out, const Panel& panel) -> void
         out << std::format(
             "Warning: parents {} and {} differ at only {} of {} sites where "
             "both are homozygous; "
-            "samples derived from either will be AMBIGUOUS\n",
+            "samples derived from either will be ambiguous\n",
             panel.names()[dup.parent_a],
             panel.names()[dup.parent_b],
             dup.n_discordant,
@@ -138,7 +138,7 @@ auto obtain_counts(
 // unprocessed sample, and adds them to `report` and their summaries to `log`
 // in completion order, with a progress bar on stdout. A sample with more than
 // `options.max_unmapped_rate` of its reads unmapped is not scored; it is
-// logged as dropped and counted by `report.add_dropped()`. The
+// logged and reported as dropped. The
 // first exception thrown by a worker stops the others after their current
 // sample and is rethrown here.
 auto process_samples(
@@ -181,7 +181,10 @@ auto process_samples(
                         obtained.counts.stats().reads_unmapped,
                         obtained.counts.stats().reads_total);
                     log.flush();
-                    report.add_dropped();
+                    const auto found = expected.find(bams[i].sample);
+                    report.add_dropped(
+                        obtained.counts,
+                        found == expected.end() ? nullptr : &found->second);
                     ++done;
                     continue;
                 }
@@ -306,6 +309,7 @@ auto run(const RunOptions& options) -> void
     pileup_options.dedup_overlaps = !options.keep_overlaps;
     ScoreOptions score_options;
     score_options.error_rate = options.error_rate;
+    score_options.site_error_rate = options.site_error_rate;
     score_options.top = options.top;
     score_options.candidates = options.candidates;
     const std::string log_path = std::format("{}.log", options.output_prefix);

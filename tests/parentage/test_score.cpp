@@ -101,6 +101,14 @@ auto make_counts(const std::vector<uint8_t>& n0, const std::vector<uint8_t>& n1)
     return counts;
 }
 
+// The read model alone, every site following the hypothesised parents.
+auto exact_sites() -> ScoreOptions
+{
+    ScoreOptions options;
+    options.site_error_rate = 0;
+    return options;
+}
+
 // Three parents, six sites, two of them uncovered:
 //   site      0  1  2  3  4  5
 //   P1        0  0  0  0  0  0
@@ -108,7 +116,7 @@ auto make_counts(const std::vector<uint8_t>& n0, const std::vector<uint8_t>& n1)
 //   P3        1  1  1  1  0  0
 //   n0        2  0  1  0  3  0
 //   n1        0  1  1  0  0  0
-auto three_parent_scores(ScoreOptions options = {}) -> SampleScores
+auto three_parent_scores(ScoreOptions options = exact_sites()) -> SampleScores
 {
     const Panel panel = make_panel(
         {2.0F / 3, 2.0F / 3, 1.0F / 3, 1.0F / 3, 0, 0},
@@ -197,7 +205,7 @@ auto het_parent_scores(std::optional<ParentPair> expected = std::nullopt)
     return score_sample(
         panel,
         make_counts({2, 0, 1, 0, 3, 0}, {0, 1, 1, 0, 0, 0}),
-        {},
+        exact_sites(),
         expected);
 }
 
@@ -259,7 +267,7 @@ auto missing_parent_scores(std::optional<ParentPair> expected = std::nullopt)
     return score_sample(
         panel,
         make_counts({2, 0, 1, 0, 3, 0}, {0, 1, 1, 0, 0, 0}),
-        {},
+        exact_sites(),
         expected);
 }
 
@@ -327,7 +335,7 @@ TEST_CASE(
     SECTION("e = 0.01 gives +0.683 / -3.912")
     {
         const SampleScores scores
-            = score_sample(panel, make_counts({1}, {0}), {});
+            = score_sample(panel, make_counts({1}, {0}), exact_sites());
         REQUIRE(scores.top[0].stats.a == 0);
         REQUIRE(scores.top[0].stats.b == 0);
         REQUIRE_THAT(scores.top[0].lod_vs_null, WithinAbs(0.68310, 1e-4));
@@ -337,7 +345,7 @@ TEST_CASE(
     }
     SECTION("e = 0.1 gives +0.588 / -1.609")
     {
-        ScoreOptions options;
+        ScoreOptions options = exact_sites();
         options.error_rate = 0.1;
         const SampleScores scores
             = score_sample(panel, make_counts({1}, {0}), options);
@@ -351,6 +359,71 @@ TEST_CASE(
         REQUIRE_THROWS_WITH(
             score_sample(panel, make_counts({1}, {0}), options),
             ContainsSubstring("error rate must be in (0, 0.5)"));
+    }
+}
+
+TEST_CASE(
+    "score_sample mixes each site with the null at the site error rate",
+    "[parentage][score]")
+{
+    // One site at allele1 frequency 0.5 and one allele0 read (e = 0.01): a
+    // site lod x becomes ln((1 - g) e^x + g).
+    const Panel panel = make_panel({0.5F}, {"0", "1"});
+    ScoreOptions options;
+    options.site_error_rate = 0.02;
+
+    const SampleScores scores
+        = score_sample(panel, make_counts({1}, {0}), options);
+
+    SECTION("a consistent pair loses little: ln 1.98 -> ln 1.9604")
+    {
+        REQUIRE(scores.top[0].stats.a == 0);
+        REQUIRE(scores.top[0].stats.b == 0);
+        REQUIRE_THAT(scores.top[0].lod_vs_null, WithinAbs(0.67315, 1e-4));
+    }
+    SECTION("a pair at odds with the read is floored: ln 0.02 -> ln 0.0396")
+    {
+        REQUIRE(scores.top[2].stats.a == 1);
+        REQUIRE(scores.top[2].stats.b == 1);
+        REQUIRE_THAT(scores.top[2].lod_vs_null, WithinAbs(-3.22893, 1e-4));
+    }
+    SECTION("a pair as likely as the null stays at 0")
+    {
+        REQUIRE(scores.top[1].stats.a == 0);
+        REQUIRE(scores.top[1].stats.b == 1);
+        REQUIRE_THAT(scores.top[1].lod_vs_null, WithinAbs(0.0, 1e-6));
+    }
+    SECTION("single parents are mixed the same way")
+    {
+        REQUIRE(scores.singles[0].parent == 0);
+        REQUIRE_THAT(scores.singles[0].lod_vs_null, WithinAbs(0.39218, 1e-4));
+        REQUIRE(scores.singles[1].parent == 1);
+        REQUIRE_THAT(scores.singles[1].lod_vs_null, WithinAbs(-0.65431, 1e-4));
+    }
+    SECTION("a heterozygous parent's marginal is mixed: ln 1.49 -> 0.392")
+    {
+        const Panel het = make_panel({0.5F}, {"0", "h"});
+        const SampleScores mixed
+            = score_sample(het, make_counts({1}, {0}), options);
+        REQUIRE(mixed.top[1].stats.a == 0);
+        REQUIRE(mixed.top[1].stats.b == 1);
+        REQUIRE_THAT(mixed.top[1].lod_vs_null, WithinAbs(0.39218, 1e-4));
+    }
+    SECTION("a missing parent's marginal is mixed: ln 1.49 -> 0.392")
+    {
+        const Panel missing = make_panel({0.5F}, {"0", "m"});
+        const SampleScores mixed
+            = score_sample(missing, make_counts({1}, {0}), options);
+        REQUIRE(mixed.top[1].stats.a == 0);
+        REQUIRE(mixed.top[1].stats.b == 1);
+        REQUIRE_THAT(mixed.top[1].lod_vs_null, WithinAbs(0.39218, 1e-4));
+    }
+    SECTION("a site error rate outside [0, 1) is rejected")
+    {
+        options.site_error_rate = 1;
+        REQUIRE_THROWS_WITH(
+            score_sample(panel, make_counts({1}, {0}), options),
+            ContainsSubstring("site error rate must be in [0, 1)"));
     }
 }
 
@@ -405,7 +478,7 @@ TEST_CASE(
     "[parentage][score]")
 {
     // Single-parent order is P1, P3, P2 (see the three-parent case).
-    ScoreOptions options;
+    ScoreOptions options = exact_sites();
     options.candidates = 2;
 
     const SampleScores scores = three_parent_scores(options);
@@ -451,7 +524,7 @@ TEST_CASE(
         {"000000", "110000", "111100"});
     const SampleCounts counts
         = make_counts({2, 0, 1, 0, 3, 0}, {0, 1, 1, 0, 0, 0});
-    ScoreOptions options;
+    ScoreOptions options = exact_sites();
     options.candidates = 2;
 
     SECTION("a candidate pair given in either order takes its rank")

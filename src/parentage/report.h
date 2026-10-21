@@ -6,7 +6,6 @@
 #include <fstream>
 #include <map>
 #include <optional>
-#include <ostream>
 #include <span>
 #include <string>
 #include <string_view>
@@ -24,23 +23,22 @@ struct CallOptions
     double max_hom_mismatch = 0.03;  // best-pair hom_mismatch_rate for fit
 };
 
-// How many panel parents the sample's reads identify.
+// The model that explains the sample's reads: no panel parent (null), one
+// panel parent (single) or two (pair); ambiguous when two candidates are too
+// close to call.
 enum class Status
 {
-    zero_parent,
-    one_parent,
-    two_parent,
+    null,
+    single,
+    pair,
     ambiguous,
 };
 
 inline constexpr std::array<Status, 4> all_statuses{
-    Status::zero_parent,
-    Status::one_parent,
-    Status::two_parent,
-    Status::ambiguous};
+    Status::null, Status::single, Status::pair, Status::ambiguous};
 
-// Whether the best pair explains the reads; `na` when the pair model does
-// not lead or its hom_mismatch_rate is NaN.
+// Whether the best pair explains the reads; `na` when its hom_mismatch_rate
+// is NaN.
 enum class Fit
 {
     pass,
@@ -62,7 +60,7 @@ inline constexpr std::array<Fit, 3> all_fits{Fit::pass, Fit::fail, Fit::na};
 // parent.
 [[nodiscard]] auto single_lod_vs_second(const SampleScores& scores) -> double;
 
-// The margin an AMBIGUOUS call fails: between the leading model and the
+// The margin an ambiguous call fails: between the leading model and the
 // runner-up model, or within the leading model between the best pair and the
 // second (pair) or the best single parent and the second (single).
 enum class Contest
@@ -93,7 +91,7 @@ struct Ambiguity
     const CallOptions& options) -> Status;
 
 // pass when the best pair's hom_mismatch_rate <= max_hom_mismatch, fail
-// above it, na when the pair model does not lead or the rate is NaN.
+// above it, na when the rate is NaN; whatever model leads.
 [[nodiscard]] auto assign_fit(
     const SampleScores& scores,
     const CallOptions& options) -> Fit;
@@ -115,10 +113,11 @@ struct ExpectedParents
     std::span<const std::string> parent_names)
     -> std::unordered_map<std::string, ExpectedParents>;
 
-// Writes one table per status, `<prefix>.<status>.tsv` (one row per sample,
-// with the columns that status needs), and `<prefix>.topk.tsv` (the top
-// pairs of every sample) as samples are added, and `<prefix>.summary.txt` on
-// `finish()`. Rows are flushed as they are written. Not thread-safe.
+// Writes `<prefix>.tsv` (one row per sample: the call, the log-likelihoods
+// of the models and the diagnostics of the best pair and single parent) and
+// `<prefix>.topk.tsv` (the top pairs of every sample) as samples are added,
+// and `<prefix>.summary.txt` on `finish()`. Rows are flushed as they are
+// written. Not thread-safe.
 class ReportWriter
 {
    public:
@@ -127,11 +126,14 @@ class ReportWriter
         const SampleScores& scores,
         const ExpectedParents* expected) -> void;
 
-    // Counts a sample left out of the tables, reported in the summary.
-    auto add_dropped() -> void { ++n_dropped_; }
+    // Writes a row with `best` = dropped for a sample that was not scored.
+    auto add_dropped(
+        const SampleCounts& counts,
+        const ExpectedParents* expected) -> void;
 
-    // Writes the dropped count, the status counts, the fit counts of TWO_PARENT samples, and the
-    // expected-status counts when expected pairs were given. Throws when a file cannot be written.
+    // Writes the counts of each `best`, the fits of the samples called pair,
+    // and `best` against the expected pair's rank when expected pairs were
+    // given. Throws when the file cannot be written.
     auto finish() -> void;
 
    private:
@@ -146,30 +148,25 @@ class ReportWriter
         std::span<const std::string> parent_names,
         bool with_expected,
         const CallOptions& options,
-        std::array<std::ofstream, all_statuses.size()> tables,
+        std::ofstream table,
         std::ofstream topk);
 
-    auto write_expected(
-        std::ostream& out,
-        const SampleScores& scores,
-        const ExpectedParents* expected) -> std::string_view;
+    auto check_written() -> void;
 
     std::string prefix_;
     std::span<const std::string> names_;
     bool with_expected_;
     CallOptions options_;
-    std::array<std::ofstream, all_statuses.size()> tables_;  // by Status
+    std::ofstream table_;
     std::ofstream topk_;
-    size_t n_samples_ = 0;  // scored
-    size_t n_dropped_ = 0;
-    // (status, expected_status) -> samples
+    // (best, expected-rank class) -> samples
     std::map<std::pair<std::string_view, std::string_view>, size_t> tally_;
-    std::map<std::string_view, size_t> fits_;  // of TWO_PARENT samples
+    std::map<std::string_view, size_t> fits_;  // of samples called pair
 };
 
 // Opens the per-sample outputs and writes their headers; `with_expected`
-// adds the expected-pair columns. `parent_names` must outlive the writer.
-// Throws when a file cannot be created.
+// adds the expected-rank table to the summary. `parent_names` must outlive
+// the writer. Throws when a file cannot be created.
 [[nodiscard]] auto open_report(
     const std::string& prefix,
     std::span<const std::string> parent_names,

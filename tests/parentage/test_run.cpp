@@ -152,7 +152,7 @@ TEST_CASE(
     "[parentage][run]")
 {
     // P1 and P3 are identical, so every sample is best explained by P1
-    // selfing, with (P1, P3) tied second: AMBIGUOUS, with the pair leading.
+    // selfing, with (P1, P3) tied second: ambiguous, with the pair leading.
     FileFixture files;
     PanelVcf panel;
     panel.sites = repeated_sites("chr01", 3, {"0/0", "1/1", "0/0"});
@@ -169,32 +169,39 @@ TEST_CASE(
 
     run(options);
 
-    const std::string ambiguous
-        = file_text(options.output_prefix + ".ambiguous.tsv");
+    const std::string table = file_text(options.output_prefix + ".tsv");
     const std::string summary
         = file_text(options.output_prefix + ".summary.txt");
-    CAPTURE(ambiguous, summary);
-    SECTION("writes an AMBIGUOUS sample with the contest it fails")
+    CAPTURE(table, summary);
+    SECTION("writes the header")
+    {
+        REQUIRE(table.starts_with(
+            "sample\tcoverage\tbest\tbest_a\tbest_b\texpected_a\t"
+            "expected_b\tnull\tsingle\tbest_pair\tsecond_pair\texpected\t"
+            "pair_hom_mismatch_rate\tpair_het_alt_fraction\tpair_fit\t"
+            "single_allele_absent_rate\tcontest\texpected_pair_rank\n"));
+    }
+    SECTION("writes the call, the leading parents and the expected parents")
     {
         REQUIRE_THAT(
-            ambiguous,
-            ContainsSubstring("\nA\t1.000\tmodel\tP1/P1\tP1\t0.5\tPASS\t"));
+            table, ContainsSubstring("\nA\t1.000\tambiguous\tP1\tP1\tP3\tP1\t"));
     }
-    SECTION("compares a present expected pair with the best pair")
+    SECTION("writes the log-likelihoods of every model and the expected pair")
     {
-        REQUIRE_THAT(ambiguous, ContainsSubstring("\tP3\tP1\tMISMATCH\t0.0\n"));
+        REQUIRE_THAT(
+            table, ContainsSubstring("\tP3\tP1\t-1.2\t-0.6\t-0.1\t-0.1\t-0.1\t"));
     }
-    SECTION("marks an expected parent missing from the panel ABSENT")
+    SECTION("writes the diagnostics, the contest and the expected rank")
     {
-        REQUIRE_THAT(ambiguous, ContainsSubstring("\tP1\tQ9\tABSENT\tNA\n"));
+        REQUIRE_THAT(
+            table, ContainsSubstring("\t0.00000\tNA\tPASS\tNA\tmodel\t2\n"));
     }
-    SECTION("writes only the header of a status no sample has")
+    SECTION("an expected parent missing from the panel is ABSENT")
     {
-        REQUIRE(
-            file_text(options.output_prefix + ".two_parent.tsv")
-            == "sample\tdepth_mean\ta\tb\tis_selfing\thom_mismatch_rate\t"
-               "het_alt_fraction\tfit\texpected_a\texpected_b\t"
-               "expected_status\texpected_lod_vs_best\n");
+        REQUIRE_THAT(
+            table,
+            ContainsSubstring("\tP1\tQ9\t-1.2\t-0.6\t-0.1\t-0.1\tNA\t"));
+        REQUIRE_THAT(table, ContainsSubstring("\tmodel\tABSENT\n"));
     }
     SECTION("lists the top pairs of every sample")
     {
@@ -202,13 +209,15 @@ TEST_CASE(
             file_text(options.output_prefix + ".topk.tsv"),
             ContainsSubstring("\nB\t3\tP3\tP3\t3\t0\t0\t0\t"));
     }
-    SECTION("counts statuses, TWO_PARENT fits and expected statuses")
+    SECTION("counts every best, the fits of pair calls and the expected ranks")
     {
         REQUIRE_THAT(summary, ContainsSubstring("samples\t2\n"));
-        REQUIRE_THAT(summary, ContainsSubstring("\nAMBIGUOUS\t2\n"));
+        REQUIRE_THAT(summary, ContainsSubstring("\nambiguous\t2\n"));
         REQUIRE_THAT(summary, ContainsSubstring("\nPASS\t0\n"));
         REQUIRE_THAT(
-            summary, ContainsSubstring("\nAMBIGUOUS\t0\t1\t1\t0\n"));
+            summary,
+            ContainsSubstring("best\\expected_pair_rank\t1\t2+\tABSENT\tNA\n"));
+        REQUIRE_THAT(summary, ContainsSubstring("\nambiguous\t0\t1\t1\t0\n"));
     }
 }
 
@@ -240,20 +249,13 @@ TEST_CASE(
         REQUIRE_THAT(topk, ContainsSubstring("\nA\t"));
         REQUIRE_THAT(topk, !ContainsSubstring("\nB\t"));
     }
-    SECTION("writes the dropped sample to no status table")
+    SECTION("writes the dropped sample as a row without scores")
     {
         REQUIRE_THAT(
-            file_text(options.output_prefix + ".two_parent.tsv"),
-            !ContainsSubstring("\nB\t"));
-        REQUIRE_THAT(
-            file_text(options.output_prefix + ".one_parent.tsv"),
-            !ContainsSubstring("\nB\t"));
-        REQUIRE_THAT(
-            file_text(options.output_prefix + ".zero_parent.tsv"),
-            !ContainsSubstring("\nB\t"));
-        REQUIRE_THAT(
-            file_text(options.output_prefix + ".ambiguous.tsv"),
-            !ContainsSubstring("\nB\t"));
+            file_text(options.output_prefix + ".tsv"),
+            ContainsSubstring(
+                "\nB\t1.000\tdropped\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\t"
+                "NA\tNA\tNA\tNA\tNA\tNA\n"));
     }
     SECTION("logs the dropped sample with its unmapped reads")
     {
@@ -261,10 +263,11 @@ TEST_CASE(
             file_text(std::format("{}.log", options.output_prefix)),
             ContainsSubstring("Sample B dropped: 2 of 3 reads unmapped"));
     }
-    SECTION("counts scored and dropped samples in the summary")
+    SECTION("counts the dropped sample in the summary")
     {
-        REQUIRE_THAT(
-            file_text(options.output_prefix + ".summary.txt"),
-            ContainsSubstring("samples\t1\ndropped\t1\n"));
+        const std::string summary
+            = file_text(options.output_prefix + ".summary.txt");
+        REQUIRE_THAT(summary, ContainsSubstring("samples\t2\n"));
+        REQUIRE_THAT(summary, ContainsSubstring("\ndropped\t1\n"));
     }
 }

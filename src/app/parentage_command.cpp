@@ -37,9 +37,8 @@ auto add_parentage_command(CLI::App& app, ParentageOptions& options)
     command->add_option(
         "-o,--output",
         options.output_prefix,
-        "Output prefix of the per-status .<status>.tsv, .topk.tsv and "
-        ".summary.txt "
-        "files; required with --bams");
+        "Output prefix of the .tsv, .topk.tsv and .summary.txt files; "
+        "required with --bams");
     command->add_option(
         "--expected",
         options.expected_path,
@@ -63,6 +62,13 @@ auto add_parentage_command(CLI::App& app, ParentageOptions& options)
             "--error-rate",
             options.error_rate,
             "Per-read probability of observing the wrong allele")
+        ->capture_default_str();
+    command
+        ->add_option(
+            "--site-error-rate",
+            options.site_error_rate,
+            "Per-site probability that the sample genotype does not follow "
+            "the panel parents")
         ->capture_default_str();
     command
         ->add_option("--top", options.top, "Parent pairs reported per sample")
@@ -94,7 +100,7 @@ auto add_parentage_command(CLI::App& app, ParentageOptions& options)
         ->add_option(
             "--min-lod",
             options.min_lod,
-            "AMBIGUOUS when a model or parent margin is below this LOD")
+            "ambiguous when a model or parent margin is below this LOD")
         ->capture_default_str();
 
     return command;
@@ -114,6 +120,7 @@ auto run_parentage_command(const ParentageOptions& options) -> void
     run_options.min_baseq = options.min_baseq;
     run_options.keep_overlaps = options.keep_overlaps;
     run_options.error_rate = options.error_rate;
+    run_options.site_error_rate = options.site_error_rate;
     run_options.top = options.top;
     run_options.candidates = options.candidates;
     run_options.threads = options.threads;

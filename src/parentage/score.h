@@ -13,6 +13,9 @@ namespace vcfbox::parentage
 struct ScoreOptions
 {
     double error_rate = 0.01;  // per-read probability of the wrong allele
+    // Per-site probability that the F1 genotype does not follow the model's
+    // parents but is drawn as under the null.
+    double site_error_rate = 0.02;
     size_t top = 10;           // best pairs kept in SampleScores::top
     // Parents with the best single-parent lod among which the pairs are
     // formed; 0 pairs every parent.
@@ -37,9 +40,10 @@ struct PairStats
 struct PairReport
 {
     PairStats stats;
-    // ln L(pair) - ln L(random panel pair) over all covered sites; at sites
-    // where a parent is heterozygous or missing the F1 genotype is
-    // marginalised over the two gametes.
+    // Σ over covered sites of ln L(pair) - ln L(random panel pair), each
+    // site mixed with the null at `site_error_rate`; at sites where a parent
+    // is heterozygous or missing the F1 genotype is marginalised over the two
+    // gametes.
     double lod_vs_null = 0;
     double hom_mismatch_rate = 0;  // hom_disc / (hom_conc + hom_disc)
     double het_alt_fraction = 0;   // het_1 / (het_0 + het_1)
@@ -69,6 +73,9 @@ struct ExpectedScore
 struct SampleScores
 {
     size_t n_covered = 0;  // sites with at least one allele0/allele1 read
+    // Σ over covered sites of ln L(random panel pair); a model's ln L is this
+    // plus its lod_vs_null.
+    double null_log_likelihood = 0;
     // The `ScoreOptions::top` best of the pairs a <= b of the candidate
     // parents (plus the expected parents, when given), best lod_vs_null
     // first; ties broken by (a, b).

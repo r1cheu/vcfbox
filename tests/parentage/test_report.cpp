@@ -152,78 +152,81 @@ TEST_CASE(
     const CallOptions options;
     SampleScores scores = passing_scores();
 
-    SECTION("a pair clear of the single and of the second pair is TWO_PARENT")
+    SECTION("a pair clear of the single and of the second pair is pair")
     {
-        REQUIRE(assign_status(scores, options) == Status::two_parent);
+        REQUIRE(assign_status(scores, options) == Status::pair);
     }
-    SECTION("a selfing best pair is TWO_PARENT")
+    SECTION("a selfing best pair is pair")
     {
         scores.top[0].stats.b = 0;
-        REQUIRE(assign_status(scores, options) == Status::two_parent);
+        REQUIRE(assign_status(scores, options) == Status::pair);
     }
-    SECTION("a pair less than min_lod above the single is AMBIGUOUS")
+    SECTION("a pair less than min_lod above the single is ambiguous")
     {
         scores.singles[0].lod_vs_null = 950.1;
         REQUIRE(assign_status(scores, options) == Status::ambiguous);
     }
-    SECTION("a pair exactly min_lod above the single is TWO_PARENT")
+    SECTION("a pair exactly min_lod above the single is pair")
     {
         scores.singles[0].lod_vs_null = 950;
-        REQUIRE(assign_status(scores, options) == Status::two_parent);
+        REQUIRE(assign_status(scores, options) == Status::pair);
     }
-    SECTION("lod_vs_second below min_lod is AMBIGUOUS")
+    SECTION("lod_vs_second below min_lod is ambiguous")
     {
         scores.lod_vs_second = 49.9;
         REQUIRE(assign_status(scores, options) == Status::ambiguous);
     }
-    SECTION("a single pair (NaN lod_vs_second) is TWO_PARENT")
+    SECTION("a single pair (NaN lod_vs_second) is pair")
     {
         scores.lod_vs_second = std::numeric_limits<double>::quiet_NaN();
-        REQUIRE(assign_status(scores, options) == Status::two_parent);
+        REQUIRE(assign_status(scores, options) == Status::pair);
     }
-    SECTION("a single clear of the pair and of the second single is ONE_PARENT")
+    SECTION("a single clear of the pair and of the second single is single")
     {
         scores.top[0].lod_vs_null = 100;
-        REQUIRE(assign_status(scores, options) == Status::one_parent);
+        REQUIRE(assign_status(scores, options) == Status::single);
     }
-    SECTION("a leading single outside the best pair is ONE_PARENT")
+    SECTION("a leading single outside the best pair is single")
     {
         scores.top[0].lod_vs_null = 100;
         scores.singles = {SingleStats{2, 500, 0.02}, SingleStats{0, 400, 0.02}};
-        REQUIRE(assign_status(scores, options) == Status::one_parent);
+        REQUIRE(assign_status(scores, options) == Status::single);
     }
-    SECTION("a single less than min_lod above the second single is AMBIGUOUS")
+    SECTION("a single less than min_lod above the second single is ambiguous")
     {
         scores.top[0].lod_vs_null = 100;
         scores.singles[1].lod_vs_null = 450.1;
         REQUIRE(assign_status(scores, options) == Status::ambiguous);
     }
-    SECTION("a single parent in the panel (NaN second) is ONE_PARENT")
+    SECTION("a single parent in the panel (NaN second) is single")
     {
         scores.top[0].lod_vs_null = 100;
         scores.singles.pop_back();
-        REQUIRE(assign_status(scores, options) == Status::one_parent);
+        REQUIRE(assign_status(scores, options) == Status::single);
     }
-    SECTION("pair and single min_lod below the null is ZERO_PARENT")
+    SECTION("pair and single min_lod below the null is null")
     {
         scores.top[0].lod_vs_null = -50;
         scores.singles[0].lod_vs_null = -60;
-        REQUIRE(assign_status(scores, options) == Status::zero_parent);
+        REQUIRE(assign_status(scores, options) == Status::null);
     }
-    SECTION("a model less than min_lod from the null is AMBIGUOUS")
+    SECTION("a model less than min_lod from the null is ambiguous")
     {
         scores.top[0].lod_vs_null = 30;
         scores.singles[0].lod_vs_null = 10;
         REQUIRE(assign_status(scores, options) == Status::ambiguous);
     }
-    SECTION("statuses are written in upper case")
+    SECTION("statuses are written as model names")
     {
-        REQUIRE(to_string(Status::zero_parent) == "ZERO_PARENT");
+        REQUIRE(to_string(Status::null) == "null");
+        REQUIRE(to_string(Status::single) == "single");
+        REQUIRE(to_string(Status::pair) == "pair");
+        REQUIRE(to_string(Status::ambiguous) == "ambiguous");
     }
 }
 
 TEST_CASE(
-    "assign_fit judges the best pair only when the pair model leads",
+    "assign_fit judges the best pair whatever model leads",
     "[parentage][report]")
 {
     const CallOptions options;
@@ -245,11 +248,11 @@ TEST_CASE(
         scores.top[0].hom_mismatch_rate = 0.031;
         REQUIRE(assign_fit(scores, options) == Fit::fail);
     }
-    SECTION("a leading single is NA")
+    SECTION("a leading single still judges the best pair")
     {
         scores.top[0].lod_vs_null = 100;
         scores.top[0].hom_mismatch_rate = 0.5;
-        REQUIRE(assign_fit(scores, options) == Fit::na);
+        REQUIRE(assign_fit(scores, options) == Fit::fail);
     }
     SECTION("a NaN hom_mismatch is NA")
     {

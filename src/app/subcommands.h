@@ -34,6 +34,7 @@ struct ParentageOptions
     int min_baseq = 20;
     bool keep_overlaps = false;
     double error_rate = 0.01;
+    double site_error_rate = 0.02;
     size_t top = 10;
     size_t candidates = 20;
     size_t threads = 1;

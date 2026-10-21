@@ -21,6 +21,7 @@ struct RunOptions
     int min_baseq = 20;
     bool keep_overlaps = false;  // count both mates over the same site
     double error_rate = 0.01;
+    double site_error_rate = 0.02;
     size_t top = 10;         // pairs reported per sample
     size_t candidates = 20;  // parents paired, by single-parent lod; 0 = all
     size_t threads = 1;      // samples processed at once

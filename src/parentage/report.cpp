@@ -17,6 +17,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "common/lines.h"
 #include "common/strings.h"
@@ -28,11 +29,13 @@ namespace vcfbox::parentage
 namespace
 {
 constexpr std::string_view na = "NA";
-constexpr std::string_view match = "MATCH";
-constexpr std::string_view mismatch = "MISMATCH";
+constexpr std::string_view dropped = "dropped";
 constexpr std::string_view absent = "ABSENT";
-constexpr std::array<std::string_view, 3> expected_statuses{
-    match, mismatch, absent};
+constexpr std::string_view rank_first = "1";
+constexpr std::string_view rank_lower = "2+";
+// Classes of expected_pair_rank in the summary.
+constexpr std::array<std::string_view, 4> rank_classes{
+    rank_first, rank_lower, absent, na};
 
 // `value` with `precision` decimals, or NA when it is NaN.
 auto fixed(double value, int precision) -> std::string
@@ -49,17 +52,6 @@ auto open_output(const std::string& path) -> std::ofstream
         throw std::runtime_error(std::format("cannot create {}", path));
     }
     return out;
-}
-
-// MATCH when the expected pair ranks first, MISMATCH otherwise, ABSENT when
-// a parent is not in the panel.
-auto expected_status(const SampleScores& scores) -> std::string_view
-{
-    if (!scores.expected)
-    {
-        return absent;
-    }
-    return scores.expected->rank == 1 ? match : mismatch;
 }
 
 enum class Model
@@ -82,96 +74,101 @@ auto leading_model(const SampleScores& scores) -> Model
     return single >= 0 ? Model::single : Model::none;
 }
 
-// The model with the highest lod_vs_null after the leader.
-auto runner_up_model(const SampleScores& scores) -> Model
+constexpr std::string_view table_header
+    = "sample\tcoverage\tbest\tbest_a\tbest_b\texpected_a\texpected_b\t"
+      "null\tsingle\tbest_pair\tsecond_pair\texpected\t"
+      "pair_hom_mismatch_rate\tpair_het_alt_fraction\tpair_fit\t"
+      "single_allele_absent_rate\tcontest\texpected_pair_rank";
+
+// Columns after `expected_b`.
+constexpr size_t n_scored_columns = 11;
+
+auto mean_depth(const SampleCounts& counts) -> double
 {
-    const double pair = scores.top.front().lod_vs_null;
-    const double single = scores.singles.front().lod_vs_null;
+    return static_cast<double>(counts.bases_used())
+           / static_cast<double>(counts.n_sites());
+}
+
+// The parents of the leading model: the best pair, the best single parent
+// and NA, or NA twice for the null.
+auto leading_parents(
+    const SampleScores& scores,
+    std::span<const std::string> names) -> std::pair<std::string, std::string>
+{
     switch (leading_model(scores))
     {
         case Model::pair:
-            return single >= 0 ? Model::single : Model::none;
+            return {
+                names[scores.top.front().stats.a],
+                names[scores.top.front().stats.b]};
         case Model::single:
-            return pair >= 0 ? Model::pair : Model::none;
+            return {names[scores.singles.front().parent], std::string(na)};
         case Model::none:
-            return pair >= single ? Model::pair : Model::single;
+            return {std::string(na), std::string(na)};
     }
     throw std::logic_error("unknown model");
 }
 
-// `a/b` for a pair, the name for a single parent.
-auto pair_name(const PairStats& pair, std::span<const std::string> names)
-    -> std::string
-{
-    return std::format("{}/{}", names[pair.a], names[pair.b]);
-}
-
-// The best pair, the best single parent, or NONE for the null model.
-auto model_name(
+// The expected pair's rank among the scored pairs, ABSENT when a parent is
+// not in the panel, NA without an expected pair.
+auto expected_rank(
     const SampleScores& scores,
-    Model model,
-    std::span<const std::string> names) -> std::string
+    const ExpectedParents* expected) -> std::string
 {
-    switch (model)
+    if (expected == nullptr)
     {
-        case Model::pair:
-            return pair_name(scores.top.front().stats, names);
-        case Model::single:
-            return names[scores.singles.front().parent];
-        case Model::none:
-            return "NONE";
+        return std::string(na);
     }
-    throw std::logic_error("unknown model");
+    return scores.expected ? std::to_string(scores.expected->rank)
+                           : std::string(absent);
 }
 
-// The two candidates `ambiguity` could not separate, best first.
-auto contenders(
-    const SampleScores& scores,
-    const Ambiguity& ambiguity,
-    std::span<const std::string> names) -> std::pair<std::string, std::string>
+auto rank_class(const SampleScores& scores, const ExpectedParents* expected)
+    -> std::string_view
 {
-    switch (ambiguity.contest)
+    if (expected == nullptr)
     {
-        case Contest::model:
-            return {
-                model_name(scores, leading_model(scores), names),
-                model_name(scores, runner_up_model(scores), names)};
-        case Contest::pair:
-            return {
-                pair_name(scores.top[0].stats, names),
-                pair_name(scores.top[1].stats, names)};
-        case Contest::single:
-            return {
-                names[scores.singles[0].parent],
-                names[scores.singles[1].parent]};
+        return na;
     }
-    throw std::logic_error("unknown contest");
+    if (!scores.expected)
+    {
+        return absent;
+    }
+    return scores.expected->rank == 1 ? rank_first : rank_lower;
 }
 
-constexpr std::array<std::string_view, all_statuses.size()> table_headers{
-    "sample\tdepth_mean",
-    "sample\tdepth_mean\tparent",
-    "sample\tdepth_mean\ta\tb\tis_selfing\thom_mismatch_rate\t"
-    "het_alt_fraction\tfit",
-    "sample\tdepth_mean\tcontest\tfirst\tsecond\tmargin\tfit",
-};
-
-constexpr std::array<std::string_view, all_statuses.size()> table_names{
-    "zero_parent", "one_parent", "two_parent", "ambiguous"};
+// `sample<TAB>coverage<TAB>best<TAB>best_a<TAB>best_b<TAB>expected_a<TAB>expected_b`
+auto write_leading_columns(
+    std::ostream& out,
+    const SampleCounts& counts,
+    std::string_view best,
+    const std::pair<std::string, std::string>& parents,
+    const ExpectedParents* expected) -> void
+{
+    out << std::format(
+        "{}\t{:.3f}\t{}\t{}\t{}\t{}\t{}",
+        counts.sample(),
+        mean_depth(counts),
+        best,
+        parents.first,
+        parents.second,
+        expected == nullptr ? na : std::string_view(expected->a),
+        expected == nullptr ? na : std::string_view(expected->b));
+}
 }  // namespace
 
 auto to_string(Status status) -> std::string_view
 {
     switch (status)
     {
-        case Status::zero_parent:
-            return "ZERO_PARENT";
-        case Status::one_parent:
-            return "ONE_PARENT";
-        case Status::two_parent:
-            return "TWO_PARENT";
+        case Status::null:
+            return "null";
+        case Status::single:
+            return "single";
+        case Status::pair:
+            return "pair";
         case Status::ambiguous:
-            return "AMBIGUOUS";
+            return "ambiguous";
     }
     throw std::logic_error("unknown status");
 }
@@ -260,11 +257,11 @@ auto assign_status(const SampleScores& scores, const CallOptions& options)
     switch (leading_model(scores))
     {
         case Model::pair:
-            return Status::two_parent;
+            return Status::pair;
         case Model::single:
-            return Status::one_parent;
+            return Status::single;
         case Model::none:
-            return Status::zero_parent;
+            return Status::null;
     }
     throw std::logic_error("unknown model");
 }
@@ -273,7 +270,7 @@ auto assign_fit(const SampleScores& scores, const CallOptions& options)
     -> Fit
 {
     const double rate = scores.top.front().hom_mismatch_rate;
-    if (leading_model(scores) != Model::pair || std::isnan(rate))
+    if (std::isnan(rate))
     {
         return Fit::na;
     }
@@ -338,13 +335,13 @@ ReportWriter::ReportWriter(
     std::span<const std::string> parent_names,
     bool with_expected,
     const CallOptions& options,
-    std::array<std::ofstream, all_statuses.size()> tables,
+    std::ofstream table,
     std::ofstream topk)
     : prefix_(std::move(prefix)),
       names_(parent_names),
       with_expected_(with_expected),
       options_(options),
-      tables_(std::move(tables)),
+      table_(std::move(table)),
       topk_(std::move(topk))
 {
 }
@@ -355,19 +352,8 @@ auto open_report(
     bool with_expected,
     const CallOptions& options) -> ReportWriter
 {
-    std::array<std::ofstream, all_statuses.size()> tables;
-    for (size_t i = 0; i < tables.size(); ++i)
-    {
-        std::ofstream& table = tables[i];
-        table = open_output(std::format("{}.{}.tsv", prefix, table_names[i]));
-        table << table_headers[i];
-        if (with_expected)
-        {
-            table << "\texpected_a\texpected_b\texpected_status\t"
-                     "expected_lod_vs_best";
-        }
-        table << '\n' << std::flush;
-    }
+    std::ofstream table = open_output(std::format("{}.tsv", prefix));
+    table << table_header << '\n' << std::flush;
     std::ofstream topk = open_output(std::format("{}.topk.tsv", prefix));
     topk << "sample\trank\ta\tb\thom_conc\thom_disc\thet_0\thet_1\t"
             "lod_vs_null\thom_mismatch_rate\thet_alt_fraction\n"
@@ -377,36 +363,8 @@ auto open_report(
         parent_names,
         with_expected,
         options,
-        std::move(tables),
+        std::move(table),
         std::move(topk)};
-}
-
-auto ReportWriter::write_expected(
-    std::ostream& out,
-    const SampleScores& scores,
-    const ExpectedParents* expected) -> std::string_view
-{
-    if (!with_expected_)
-    {
-        return na;
-    }
-    if (expected == nullptr)
-    {
-        out << std::format("\t{0}\t{0}\t{0}\t{0}", na);
-        return na;
-    }
-    const std::string_view status = expected_status(scores);
-    const double lod_vs_best = scores.expected
-                                   ? scores.expected->report.lod_vs_null
-                                         - scores.top.front().lod_vs_null
-                                   : std::numeric_limits<double>::quiet_NaN();
-    out << std::format(
-        "\t{}\t{}\t{}\t{}",
-        expected->a,
-        expected->b,
-        status,
-        fixed(lod_vs_best, 1));
-    return status;
 }
 
 auto ReportWriter::add(
@@ -414,51 +372,37 @@ auto ReportWriter::add(
     const SampleScores& scores,
     const ExpectedParents* expected) -> void
 {
-    const std::string& sample = counts.sample();
     const PairReport& best = scores.top.front();
+    const SingleStats& single = scores.singles.front();
     const Status call = assign_status(scores, options_);
     const Fit fit = assign_fit(scores, options_);
-    std::ofstream& table = tables_[static_cast<size_t>(call)];
+    const std::optional<Ambiguity> ambiguity
+        = find_ambiguity(scores, options_);
+    const double null = scores.null_log_likelihood;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
 
-    table << std::format(
-        "{}\t{:.3f}",
-        sample,
-        static_cast<double>(counts.bases_used())
-            / static_cast<double>(counts.n_sites()));
-    switch (call)
-    {
-        case Status::zero_parent:
-            break;
-        case Status::one_parent:
-            table << std::format(
-                "\t{}", names_[scores.singles.front().parent]);
-            break;
-        case Status::two_parent:
-            table << std::format(
-                "\t{}\t{}\t{}\t{}\t{}\t{}",
-                names_[best.stats.a],
-                names_[best.stats.b],
-                best.stats.a == best.stats.b ? 1 : 0,
-                fixed(best.hom_mismatch_rate, 5),
-                fixed(best.het_alt_fraction, 4),
-                to_string(fit));
-            break;
-        case Status::ambiguous:
-        {
-            const Ambiguity ambiguity = *find_ambiguity(scores, options_);
-            const auto [first, second] = contenders(scores, ambiguity, names_);
-            table << std::format(
-                "\t{}\t{}\t{}\t{}\t{}",
-                to_string(ambiguity.contest),
-                first,
-                second,
-                fixed(ambiguity.margin, 1),
-                to_string(fit));
-            break;
-        }
-    }
-    const std::string_view status = write_expected(table, scores, expected);
-    table << '\n' << std::flush;
+    write_leading_columns(
+        table_,
+        counts,
+        to_string(call),
+        leading_parents(scores, names_),
+        expected);
+    table_ << std::format(
+        "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+        fixed(null, 1),
+        fixed(null + single.lod_vs_null, 1),
+        fixed(null + best.lod_vs_null, 1),
+        fixed(scores.top.size() < 2 ? nan : null + scores.top[1].lod_vs_null, 1),
+        fixed(
+            scores.expected ? null + scores.expected->report.lod_vs_null : nan,
+            1),
+        fixed(best.hom_mismatch_rate, 5),
+        fixed(best.het_alt_fraction, 4),
+        to_string(fit),
+        fixed(single.allele_absent_rate, 5),
+        ambiguity ? to_string(ambiguity->contest) : na,
+        expected_rank(scores, expected));
+    table_ << std::flush;
 
     for (size_t rank = 0; rank < scores.top.size(); ++rank)
     {
@@ -466,7 +410,7 @@ auto ReportWriter::add(
         const PairStats& st = report.stats;
         topk_ << std::format(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-            sample,
+            counts.sample(),
             rank + 1,
             names_[st.a],
             names_[st.b],
@@ -480,13 +424,32 @@ auto ReportWriter::add(
     }
     topk_ << std::flush;
 
-    ++n_samples_;
-    ++tally_[{to_string(call), status}];
-    if (call == Status::two_parent)
+    ++tally_[{to_string(call), rank_class(scores, expected)}];
+    if (call == Status::pair)
     {
         ++fits_[to_string(fit)];
     }
-    if (!table || !topk_)
+    check_written();
+}
+
+auto ReportWriter::add_dropped(
+    const SampleCounts& counts,
+    const ExpectedParents* expected) -> void
+{
+    write_leading_columns(
+        table_, counts, dropped, {std::string(na), std::string(na)}, expected);
+    for (size_t i = 0; i < n_scored_columns; ++i)
+    {
+        table_ << '\t' << na;
+    }
+    table_ << '\n' << std::flush;
+    ++tally_[{dropped, na}];
+    check_written();
+}
+
+auto ReportWriter::check_written() -> void
+{
+    if (!table_ || !topk_)
     {
         throw std::runtime_error(
             std::format("cannot write the report of {}", prefix_));
@@ -495,51 +458,48 @@ auto ReportWriter::add(
 
 auto ReportWriter::finish() -> void
 {
-    std::map<std::string_view, size_t> by_call;
-    std::map<std::string_view, size_t> by_expected;
+    std::map<std::string_view, size_t> by_best;
+    size_t n_samples = 0;
     for (const auto& [key, n] : tally_)
     {
-        by_call[key.first] += n;
-        by_expected[key.second] += n;
+        by_best[key.first] += n;
+        n_samples += n;
     }
-    const std::string path = std::format("{}.summary.txt", prefix_);
-    std::ofstream out = open_output(path);
-    out << std::format(
-        "samples\t{}\ndropped\t{}\n\nstatus\tsamples\n",
-        n_samples_,
-        n_dropped_);
+    std::vector<std::string_view> bests;
     for (const Status call : all_statuses)
     {
-        out << std::format(
-            "{}\t{}\n", to_string(call), by_call[to_string(call)]);
+        bests.push_back(to_string(call));
     }
-    out << "\ntwo_parent_fit\tsamples\n";
+    bests.push_back(dropped);
+
+    const std::string path = std::format("{}.summary.txt", prefix_);
+    std::ofstream out = open_output(path);
+    out << std::format("samples\t{}\n\nbest\tsamples\n", n_samples);
+    for (const std::string_view best : bests)
+    {
+        out << std::format("{}\t{}\n", best, by_best[best]);
+    }
+    out << "\npair_fit\tsamples\n";
     for (const Fit fit : all_fits)
     {
         out << std::format("{}\t{}\n", to_string(fit), fits_[to_string(fit)]);
     }
     if (with_expected_)
     {
-        out << "\nexpected_status\tsamples\n";
-        for (const std::string_view status : expected_statuses)
+        out << "\nbest\\expected_pair_rank";
+        for (const std::string_view rank : rank_classes)
         {
-            out << std::format("{}\t{}\n", status, by_expected[status]);
+            out << '\t' << rank;
         }
-        out << std::format("{}\t{}\n", na, by_expected[na]);
-        out << "\nstatus";
-        for (const std::string_view status : expected_statuses)
+        out << '\n';
+        for (const std::string_view best : bests)
         {
-            out << '\t' << status;
-        }
-        out << '\t' << na << '\n';
-        for (const Status call : all_statuses)
-        {
-            out << to_string(call);
-            for (const std::string_view status : expected_statuses)
+            out << best;
+            for (const std::string_view rank : rank_classes)
             {
-                out << '\t' << tally_[{to_string(call), status}];
+                out << '\t' << tally_[{best, rank}];
             }
-            out << '\t' << tally_[{to_string(call), na}] << '\n';
+            out << '\n';
         }
     }
     out.flush();
