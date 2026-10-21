@@ -25,7 +25,6 @@ struct RunOptions
     size_t top = 10;         // pairs reported per sample
     size_t candidates = 20;  // parents paired, by single-parent lod; 0 = all
     size_t threads = 1;      // samples processed at once
-    double max_unmapped_rate = 0.8;  // above it a sample is dropped unscored
     CallOptions call;
 };
 
@@ -44,8 +43,6 @@ struct BamEntry
 // Loads the panel, then counts alleles for every listed BAM (or reads the
 // counts back from `counts_dir`), scores it against the parent pairs and
 // writes the `<output_prefix>.*` report files and the panel and per-sample
-// summaries to `<output_prefix>.log`. A sample with more than
-// `max_unmapped_rate` of its reads unmapped is logged as dropped and counted
-// in the summary, but appears in no table.
+// summaries to `<output_prefix>.log`.
 auto run(const RunOptions& options) -> void;
 }  // namespace vcfbox::parentage

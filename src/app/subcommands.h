@@ -38,8 +38,6 @@ struct ParentageOptions
     size_t top = 10;
     size_t candidates = 20;
     size_t threads = 1;
-    double max_unmapped_rate = 0.8;
-    double max_hom_mismatch = 0.03;
     double min_lod = 50;
 };
 

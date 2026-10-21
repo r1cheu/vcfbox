@@ -13,13 +13,11 @@
 
 using Catch::Matchers::ContainsSubstring;
 using vcfbox::parentage::Ambiguity;
-using vcfbox::parentage::assign_fit;
 using vcfbox::parentage::assign_status;
 using vcfbox::parentage::CallOptions;
 using vcfbox::parentage::Contest;
 using vcfbox::parentage::ExpectedParents;
 using vcfbox::parentage::find_ambiguity;
-using vcfbox::parentage::Fit;
 using vcfbox::parentage::model_margin;
 using vcfbox::parentage::PairReport;
 using vcfbox::parentage::PairStats;
@@ -222,49 +220,6 @@ TEST_CASE(
         REQUIRE(to_string(Status::single) == "single");
         REQUIRE(to_string(Status::pair) == "pair");
         REQUIRE(to_string(Status::ambiguous) == "ambiguous");
-    }
-}
-
-TEST_CASE(
-    "assign_fit judges the best pair whatever model leads",
-    "[parentage][report]")
-{
-    const CallOptions options;
-    SampleScores scores = passing_scores();
-
-    SECTION("hom_mismatch at the maximum is PASS")
-    {
-        scores.top[0].hom_mismatch_rate = 0.03;
-        REQUIRE(assign_fit(scores, options) == Fit::pass);
-    }
-    SECTION("hom_mismatch above the maximum is FAIL")
-    {
-        scores.top[0].hom_mismatch_rate = 0.031;
-        REQUIRE(assign_fit(scores, options) == Fit::fail);
-    }
-    SECTION("a leading pair within min_lod of the single is still judged")
-    {
-        scores.singles[0].lod_vs_null = 990;
-        scores.top[0].hom_mismatch_rate = 0.031;
-        REQUIRE(assign_fit(scores, options) == Fit::fail);
-    }
-    SECTION("a leading single still judges the best pair")
-    {
-        scores.top[0].lod_vs_null = 100;
-        scores.top[0].hom_mismatch_rate = 0.5;
-        REQUIRE(assign_fit(scores, options) == Fit::fail);
-    }
-    SECTION("a NaN hom_mismatch is NA")
-    {
-        scores.top[0].hom_mismatch_rate
-            = std::numeric_limits<double>::quiet_NaN();
-        REQUIRE(assign_fit(scores, options) == Fit::na);
-    }
-    SECTION("fits are written as PASS, FAIL and NA")
-    {
-        REQUIRE(to_string(Fit::pass) == "PASS");
-        REQUIRE(to_string(Fit::fail) == "FAIL");
-        REQUIRE(to_string(Fit::na) == "NA");
     }
 }
 

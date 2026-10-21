@@ -95,14 +95,6 @@ auto print_sample_summary(
         stats.bases_skipped_baseq);
 }
 
-// Whether more than `max_rate` of the sample's reads are unmapped.
-auto mostly_unmapped(const SampleCounts& counts, double max_rate) -> bool
-{
-    const PileupStats& stats = counts.stats();
-    return static_cast<double>(stats.reads_unmapped)
-           > max_rate * static_cast<double>(stats.reads_total);
-}
-
 auto sample_name_from_path(const std::string& path) -> std::string
 {
     const fs::path p(path);
@@ -136,11 +128,9 @@ auto obtain_counts(
 
 // Processes the samples on `options.threads` workers, each taking the next
 // unprocessed sample, and adds them to `report` and their summaries to `log`
-// in completion order, with a progress bar on stdout. A sample with more than
-// `options.max_unmapped_rate` of its reads unmapped is not scored; it is
-// logged and reported as dropped. The
-// first exception thrown by a worker stops the others after their current
-// sample and is rethrown here.
+// in completion order, with a progress bar on stdout. The first exception
+// thrown by a worker stops the others after their current sample and is
+// rethrown here.
 auto process_samples(
     const Panel& panel,
     std::span<const BamEntry> bams,
@@ -170,24 +160,6 @@ auto process_samples(
             {
                 const ObtainedCounts obtained = obtain_counts(
                     bams[i], panel.sites(), options, pileup_options);
-                if (mostly_unmapped(obtained.counts, options.max_unmapped_rate))
-                {
-                    const std::lock_guard lock(output_mutex);
-                    print_sample_summary(
-                        log, obtained.counts, obtained.origin);
-                    log << std::format(
-                        "Sample {} dropped: {} of {} reads unmapped\n",
-                        bams[i].sample,
-                        obtained.counts.stats().reads_unmapped,
-                        obtained.counts.stats().reads_total);
-                    log.flush();
-                    const auto found = expected.find(bams[i].sample);
-                    report.add_dropped(
-                        obtained.counts,
-                        found == expected.end() ? nullptr : &found->second);
-                    ++done;
-                    continue;
-                }
                 const auto found = expected.find(bams[i].sample);
                 const ExpectedParents* parents
                     = found == expected.end() ? nullptr : &found->second;

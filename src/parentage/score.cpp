@@ -127,8 +127,30 @@ struct CountPlanes
     std::array<std::vector<uint64_t>, n_planes> p0;
     std::array<std::vector<uint64_t>, n_planes> p1;
     std::vector<uint32_t> covered_words;  // words holding a covered site
-    std::vector<uint64_t> covered;  // covered sites of each covered word
+    std::vector<uint64_t> covered;        // covered sites of each covered word
+    // covered sites before each covered word
+    std::vector<uint32_t> covered_before;
 };
+
+// Position among the covered sites of bit `bit` of covered word `i`.
+auto covered_index(const CountPlanes& planes, size_t i, int bit) -> size_t
+{
+    const uint64_t below = (uint64_t{1} << bit) - 1;
+    return planes.covered_before[i]
+           + static_cast<size_t>(std::popcount(planes.covered[i] & below));
+}
+
+// Calls `f(bit)` for every set bit of `sites`, lowest first.
+template <typename F>
+auto for_each_bit(uint64_t sites, F&& f) -> void
+{
+    while (sites != 0)
+    {
+        const int bit = std::countr_zero(sites);
+        sites &= sites - 1;
+        f(bit);
+    }
+}
 
 auto build_planes(const SampleCounts& counts, size_t words) -> CountPlanes
 {
@@ -150,6 +172,12 @@ auto build_planes(const SampleCounts& counts, size_t words) -> CountPlanes
         const auto word = static_cast<uint32_t>(s / 64);
         if (word != last_covered_word)
         {
+            planes.covered_before.push_back(
+                planes.covered.empty()
+                    ? 0
+                    : planes.covered_before.back()
+                          + static_cast<uint32_t>(
+                              std::popcount(planes.covered.back())));
             planes.covered_words.push_back(word);
             planes.covered.push_back(0);
             last_covered_word = word;
@@ -215,17 +243,20 @@ auto count_pair(
 // kept per site where it does, and of a fixed F1 genotype at every site.
 struct SiteTerms
 {
-    double m0_sum = 0;              // Σ lod(parent carries allele0)
+    double m0_sum = 0;  // Σ lod(parent carries allele0)
     // lod of F1 genotype 00 / 01 / 11 at site s at [3 s] / [3 s + 1] /
     // [3 s + 2]; 0 where the site has no reads.
     std::vector<float> fixed;
-    std::vector<uint32_t> covered;  // sites with reads
+    std::vector<uint32_t> covered;      // sites with reads
     std::vector<double> m0;             // per covered site
     std::vector<double> m1_minus_m0;    // per covered site
     std::vector<double> mhet_minus_m0;  // per covered site; parent het
-    std::vector<uint64_t> two_reads;    // bit set: n0 + n1 >= 2
-    std::vector<uint64_t> absent0;      // bit set: n0 == 0 and n1 >= 2
-    std::vector<uint64_t> absent1;      // bit set: n1 == 0 and n0 >= 2
+    // Per covered site: lod of a pair of a heterozygous parent and a hom0 /
+    // hom1 / heterozygous parent.
+    std::vector<std::array<double, 3>> with_het;
+    std::vector<uint64_t> two_reads;  // bit set: n0 + n1 >= 2
+    std::vector<uint64_t> absent0;    // bit set: n0 == 0 and n1 >= 2
+    std::vector<uint64_t> absent1;    // bit set: n1 == 0 and n0 >= 2
 };
 
 auto build_site_terms(
@@ -257,17 +288,23 @@ auto build_site_terms(
         terms.fixed[3 * s] = static_cast<float>(mix(l.l00 - l_null));
         terms.fixed[(3 * s) + 1] = static_cast<float>(mix(l.l01 - l_null));
         terms.fixed[(3 * s) + 2] = static_cast<float>(mix(l.l11 - l_null));
-        const double raw0 = log_sum_exp(
-                                {log_or_neg_inf(p) + l.l00,
-                                 log_or_neg_inf(q) + l.l01})
-                            - l_null;
-        const double raw1 = log_sum_exp(
-                                {log_or_neg_inf(p) + l.l01,
-                                 log_or_neg_inf(q) + l.l11})
-                            - l_null;
+        const double raw0
+            = log_sum_exp(
+                  {log_or_neg_inf(p) + l.l00, log_or_neg_inf(q) + l.l01})
+              - l_null;
+        const double raw1
+            = log_sum_exp(
+                  {log_or_neg_inf(p) + l.l01, log_or_neg_inf(q) + l.l11})
+              - l_null;
         const double m0 = mix(raw0);
         const double m1 = mix(raw1);
         const double mhet = mix(log_sum_exp({raw0, raw1}) + w.het);
+        terms.with_het.push_back(
+            {mix(log_sum_exp({l.l00, l.l01}) + w.het - l_null),
+             mix(log_sum_exp({l.l01, l.l11}) + w.het - l_null),
+             mix(log_sum_exp(
+                     {l.l00 + (2 * w.het), l.l01 + w.het, l.l11 + (2 * w.het)})
+                 - l_null)});
         terms.m0_sum += m0;
         terms.m0.push_back(m0);
         terms.m1_minus_m0.push_back(m1 - m0);
@@ -294,24 +331,51 @@ auto ratio(uint64_t num, uint64_t den) -> double
     return den == 0 ? nan : static_cast<double>(num) / static_cast<double>(den);
 }
 
-// Probability that a parent passes on allele1 at bit `mask` of word `w`: 0
-// or 1 when homozygous, 1/2 when heterozygous, the panel frequency `freq1`
-// when missing.
-auto gamete_allele1(
-    const ParentRows& parent,
-    size_t w,
-    uint64_t mask,
-    double freq1) -> double
+// A panel parent's call at one site.
+enum class Call : uint8_t
+{
+    hom0,
+    hom1,
+    het,
+    missing
+};
+
+auto call_at(const ParentRows& parent, size_t w, uint64_t mask) -> Call
 {
     if ((parent.missing[w] & mask) != 0)
     {
-        return freq1;
+        return Call::missing;
     }
     if ((parent.het[w] & mask) != 0)
     {
-        return 0.5;
+        return Call::het;
     }
-    return (parent.geno[w] & mask) != 0 ? 1 : 0;
+    return (parent.geno[w] & mask) != 0 ? Call::hom1 : Call::hom0;
+}
+
+// lod of a pair at covered site `c` where at least one parent is
+// heterozygous or missing. A missing parent passes on allele1 at the panel
+// frequency, so with a parent of call x it scores as the single model with
+// that parent x.
+auto uncertain_site_log_odds(const SiteTerms& terms, size_t c, Call a, Call b)
+    -> double
+{
+    if (a == Call::missing || b == Call::missing)
+    {
+        switch (a == Call::missing ? b : a)
+        {
+            case Call::hom0:
+                return terms.m0[c];
+            case Call::hom1:
+                return terms.m0[c] + terms.m1_minus_m0[c];
+            case Call::het:
+                return terms.m0[c] + terms.mhet_minus_m0[c];
+            case Call::missing:
+                return 0;
+        }
+    }
+    const Call other = a == Call::het ? b : a;
+    return terms.with_het[c][static_cast<size_t>(other)];
 }
 
 // Σ lod(pair) over the covered sites where both parents are homozygous, each
@@ -345,40 +409,30 @@ auto homozygous_log_odds(
 }
 
 // Σ lod(pair) over the covered sites where a parent is heterozygous or
-// missing: the F1 genotype is marginalised over the two gametes.
+// missing.
 auto uncertain_log_odds(
     const ParentRows& pi,
     const ParentRows& pj,
     const CountPlanes& planes,
-    const SampleCounts& counts,
-    const SiteTable& sites,
-    const ReadWeights& w,
-    const SiteMixture& mix) -> double
+    const SiteTerms& terms) -> double
 {
-    const std::span<const uint8_t> n0 = counts.n0();
-    const std::span<const uint8_t> n1 = counts.n1();
     double sum = 0;
     for (const auto [i, word] : std::views::enumerate(planes.covered_words))
     {
-        uint64_t uncertain = ~both_homozygous(pi, pj, word)
-                             & planes.covered[static_cast<size_t>(i)];
-        while (uncertain != 0)
-        {
-            const int bit = std::countr_zero(uncertain);
-            uncertain &= uncertain - 1;
-            const size_t s
-                = (static_cast<size_t>(word) * 64) + static_cast<size_t>(bit);
-            const SiteLikelihoods l = site_likelihoods(n0[s], n1[s], w);
-            const uint64_t mask = uint64_t{1} << bit;
-            const double q = sites.freq1(s);
-            const double gi = gamete_allele1(pi, word, mask, q);
-            const double gj = gamete_allele1(pj, word, mask, q);
-            const double log_l = log_sum_exp(
-                {log_or_neg_inf((1 - gi) * (1 - gj)) + l.l00,
-                 log_or_neg_inf((gi * (1 - gj)) + ((1 - gi) * gj)) + l.l01,
-                 log_or_neg_inf(gi * gj) + l.l11});
-            sum += mix(log_l - null_log_likelihood(l, q));
-        }
+        const auto index = static_cast<size_t>(i);
+        const uint64_t uncertain
+            = ~both_homozygous(pi, pj, word) & planes.covered[index];
+        for_each_bit(
+            uncertain,
+            [&](int bit)
+            {
+                const uint64_t mask = uint64_t{1} << bit;
+                sum += uncertain_site_log_odds(
+                    terms,
+                    covered_index(planes, index, bit),
+                    call_at(pi, word, mask),
+                    call_at(pj, word, mask));
+            });
     }
     return sum;
 }
@@ -388,19 +442,15 @@ auto score_pair(
     uint32_t a,
     uint32_t b,
     const CountPlanes& planes,
-    const SampleCounts& counts,
-    const SiteTerms& terms,
-    const ReadWeights& w,
-    const SiteMixture& mix) -> PairReport
+    const SiteTerms& terms) -> PairReport
 {
     const ParentRows pa = panel.parent_rows(a);
     const ParentRows pb = panel.parent_rows(b);
     PairStats stats = count_pair(pa, pb, planes);
     stats.a = a;
     stats.b = b;
-    const double lod
-        = homozygous_log_odds(pa, pb, planes, terms)
-          + uncertain_log_odds(pa, pb, planes, counts, panel.sites(), w, mix);
+    const double lod = homozygous_log_odds(pa, pb, planes, terms)
+                       + uncertain_log_odds(pa, pb, planes, terms);
     return {
         stats,
         lod,
@@ -414,10 +464,7 @@ auto score_pairs(
     const Panel& panel,
     std::span<const uint32_t> parents,
     const CountPlanes& planes,
-    const SampleCounts& counts,
-    const SiteTerms& terms,
-    const ReadWeights& w,
-    const SiteMixture& mix) -> std::vector<PairReport>
+    const SiteTerms& terms) -> std::vector<PairReport>
 {
     const size_t k = parents.size();
     std::vector<PairReport> pairs;
@@ -426,15 +473,8 @@ auto score_pairs(
     {
         for (size_t j = i; j < k; ++j)
         {
-            pairs.push_back(score_pair(
-                panel,
-                parents[i],
-                parents[j],
-                planes,
-                counts,
-                terms,
-                w,
-                mix));
+            pairs.push_back(
+                score_pair(panel, parents[i], parents[j], planes, terms));
         }
     }
     std::ranges::sort(
@@ -451,8 +491,10 @@ auto score_pairs(
     return pairs;
 }
 
-auto score_singles(const Panel& panel, const SiteTerms& terms)
-    -> std::vector<SingleStats>
+auto score_singles(
+    const Panel& panel,
+    const CountPlanes& planes,
+    const SiteTerms& terms) -> std::vector<SingleStats>
 {
     std::vector<SingleStats> singles;
     singles.reserve(panel.n_parents());
@@ -460,27 +502,25 @@ auto score_singles(const Panel& panel, const SiteTerms& terms)
     {
         const ParentRows parent = panel.parent_rows(i);
         double lod = terms.m0_sum;
-        for (size_t c = 0; c < terms.covered.size(); ++c)
-        {
-            const uint32_t s = terms.covered[c];
-            const uint64_t mask = uint64_t{1} << (s % 64);
-            if ((parent.missing[s / 64] & mask) != 0)
-            {
-                lod -= terms.m0[c];
-            }
-            else if ((parent.het[s / 64] & mask) != 0)
-            {
-                lod += terms.mhet_minus_m0[c];
-            }
-            else if ((parent.geno[s / 64] & mask) != 0)
-            {
-                lod += terms.m1_minus_m0[c];
-            }
-        }
         uint64_t absent = 0;
         uint64_t two_reads = 0;
-        for (size_t w = 0; w < parent.geno.size(); ++w)
+        for (const auto [c, w] : std::views::enumerate(planes.covered_words))
         {
+            const auto index = static_cast<size_t>(c);
+            const uint64_t covered = planes.covered[index];
+            const auto add = [&](uint64_t sites, const std::vector<double>& by)
+            {
+                for_each_bit(
+                    sites,
+                    [&](int bit)
+                    { lod += by[covered_index(planes, index, bit)]; });
+            };
+            add(parent.geno[w] & covered, terms.m1_minus_m0);
+            add(parent.het[w] & covered, terms.mhet_minus_m0);
+            for_each_bit(
+                parent.missing[w] & covered,
+                [&](int bit)
+                { lod -= terms.m0[covered_index(planes, index, bit)]; });
             const uint64_t called = ~(parent.het[w] | parent.missing[w]);
             absent += popcount(~parent.geno[w] & called & terms.absent0[w])
                       + popcount(parent.geno[w] & called & terms.absent1[w]);
@@ -545,7 +585,7 @@ auto score_sample(
 
     SampleScores scores;
     scores.n_covered = terms.covered.size();
-    scores.singles = score_singles(panel, terms);
+    scores.singles = score_singles(panel, planes, terms);
     std::vector<uint32_t> parents
         = candidate_parents(scores.singles, options.candidates);
     if (expected)
@@ -556,11 +596,9 @@ auto score_sample(
         const auto [first, last] = std::ranges::unique(parents);
         parents.erase(first, last);
     }
-    std::vector<PairReport> pairs = score_pairs(
-        panel, parents, planes, counts, terms, weights, mix);
-    scores.lod_vs_second = pairs.size() < 2
-                               ? nan
-                               : pairs[0].lod_vs_null - pairs[1].lod_vs_null;
+    std::vector<PairReport> pairs = score_pairs(panel, parents, planes, terms);
+    scores.lod_vs_second
+        = pairs.size() < 2 ? nan : pairs[0].lod_vs_null - pairs[1].lod_vs_null;
     if (expected)
     {
         const uint32_t a = std::min(expected->a, expected->b);

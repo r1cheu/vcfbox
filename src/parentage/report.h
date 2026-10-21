@@ -19,8 +19,7 @@ namespace vcfbox::parentage
 {
 struct CallOptions
 {
-    double min_lod = 50;             // every margin a call needs
-    double max_hom_mismatch = 0.03;  // best-pair hom_mismatch_rate for fit
+    double min_lod = 50;  // every margin a call needs
 };
 
 // The model that explains the sample's reads: no panel parent (null), one
@@ -35,21 +34,12 @@ enum class Status
 };
 
 inline constexpr std::array<Status, 4> all_statuses{
-    Status::null, Status::single, Status::pair, Status::ambiguous};
-
-// Whether the best pair explains the reads; `na` when its hom_mismatch_rate
-// is NaN.
-enum class Fit
-{
-    pass,
-    fail,
-    na,
-};
-
-inline constexpr std::array<Fit, 3> all_fits{Fit::pass, Fit::fail, Fit::na};
+    Status::null,
+    Status::single,
+    Status::pair,
+    Status::ambiguous};
 
 [[nodiscard]] auto to_string(Status status) -> std::string_view;
-[[nodiscard]] auto to_string(Fit fit) -> std::string_view;
 
 // The lod_vs_null of the leading model minus the best of the other two,
 // over the models: no panel parent (0), the best single parent and the best
@@ -90,12 +80,6 @@ struct Ambiguity
     const SampleScores& scores,
     const CallOptions& options) -> Status;
 
-// pass when the best pair's hom_mismatch_rate <= max_hom_mismatch, fail
-// above it, na when the rate is NaN; whatever model leads.
-[[nodiscard]] auto assign_fit(
-    const SampleScores& scores,
-    const CallOptions& options) -> Fit;
-
 // A sample's expected parents as named in the expected-pairs file.
 struct ExpectedParents
 {
@@ -124,11 +108,6 @@ class ReportWriter
     auto add(
         const SampleCounts& counts,
         const SampleScores& scores,
-        const ExpectedParents* expected) -> void;
-
-    // Writes a row with `best` = dropped for a sample that was not scored.
-    auto add_dropped(
-        const SampleCounts& counts,
         const ExpectedParents* expected) -> void;
 
     // Writes the counts of each `best`, the fits of the samples called pair,
@@ -161,7 +140,6 @@ class ReportWriter
     std::ofstream topk_;
     // (best, expected-rank class) -> samples
     std::map<std::pair<std::string_view, std::string_view>, size_t> tally_;
-    std::map<std::string_view, size_t> fits_;  // of samples called pair
 };
 
 // Opens the per-sample outputs and writes their headers; `with_expected`

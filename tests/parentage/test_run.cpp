@@ -22,8 +22,8 @@ using vcfbox::parentage::RunOptions;
 using vcfbox::parentage::SampleCounts;
 using vcfbox::test::FileFixture;
 using vcfbox::test::PanelVcf;
-using vcfbox::test::repeated_sites;
 using vcfbox::test::repeated_reads;
+using vcfbox::test::repeated_sites;
 using vcfbox::test::SamFile;
 using vcfbox::test::SamRead;
 
@@ -113,11 +113,9 @@ TEST_CASE(
             = file_text(std::format("{}.log", options.output_prefix));
         REQUIRE_THAT(log, ContainsSubstring("Panel: 3 parents, 3 sites"));
         REQUIRE_THAT(
-            log,
-            ContainsSubstring("Sample A (pileup): 1 of 1 reads used"));
+            log, ContainsSubstring("Sample A (pileup): 1 of 1 reads used"));
         REQUIRE_THAT(
-            log,
-            ContainsSubstring("Sample B (pileup): 1 of 1 reads used"));
+            log, ContainsSubstring("Sample B (pileup): 1 of 1 reads used"));
     }
     SECTION("a failing sample fails the run")
     {
@@ -176,15 +174,18 @@ TEST_CASE(
     SECTION("writes the header")
     {
         REQUIRE(table.starts_with(
-            "sample\tcoverage\tbest\tbest_a\tbest_b\texpected_a\t"
+            "sample\tcoverage\tunmapped_rate\tbest\tbest_a\tbest_b\texpected_"
+            "a\t"
             "expected_b\tsingle\tbest_pair\tsecond_pair\texpected\t"
-            "pair_hom_mismatch_rate\tpair_het_alt_fraction\tpair_fit\t"
+            "pair_hom_mismatch_rate\tpair_het_alt_fraction\t"
             "single_allele_absent_rate\tcontest\texpected_pair_rank\n"));
     }
     SECTION("writes the call, the leading parents and the expected parents")
     {
         REQUIRE_THAT(
-            table, ContainsSubstring("\nA\t1.000\tambiguous\tP1\tP1\tP3\tP1\t"));
+            table,
+            ContainsSubstring(
+                "\nA\t1.000\t0.0000\tambiguous\tP1\tP1\tP3\tP1\t"));
     }
     SECTION("writes the LOD vs null of every model and the expected pair")
     {
@@ -193,14 +194,11 @@ TEST_CASE(
     }
     SECTION("writes the diagnostics, the contest and the expected rank")
     {
-        REQUIRE_THAT(
-            table, ContainsSubstring("\t0.00000\tNA\tPASS\tNA\tmodel\t2\n"));
+        REQUIRE_THAT(table, ContainsSubstring("\t0.00000\tNA\tNA\tmodel\t2\n"));
     }
     SECTION("an expected parent missing from the panel is ABSENT")
     {
-        REQUIRE_THAT(
-            table,
-            ContainsSubstring("\tP1\tQ9\t0.6\t1.2\t1.2\tNA\t"));
+        REQUIRE_THAT(table, ContainsSubstring("\tP1\tQ9\t0.6\t1.2\t1.2\tNA\t"));
         REQUIRE_THAT(table, ContainsSubstring("\tmodel\tABSENT\n"));
     }
     SECTION("lists the top pairs of every sample")
@@ -209,11 +207,10 @@ TEST_CASE(
             file_text(options.output_prefix + ".topk.tsv"),
             ContainsSubstring("\nB\t3\tP3\tP3\t3\t0\t0\t0\t"));
     }
-    SECTION("counts every best, the fits of pair calls and the expected ranks")
+    SECTION("counts every best and the expected ranks")
     {
         REQUIRE_THAT(summary, ContainsSubstring("samples\t2\n"));
         REQUIRE_THAT(summary, ContainsSubstring("\nambiguous\t2\n"));
-        REQUIRE_THAT(summary, ContainsSubstring("\nPASS\t0\n"));
         REQUIRE_THAT(
             summary,
             ContainsSubstring("best\\expected_pair_rank\t1\t2+\tABSENT\tNA\n"));
@@ -222,10 +219,10 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "run drops a sample with more than max_unmapped_rate of reads unmapped",
+    "run scores a mostly unmapped sample and reports its unmapped rate",
     "[parentage][run]")
 {
-    // A has 1 of 2 reads unmapped, at the rate; B has 2 of 3, above it.
+    // B has 2 of 3 reads unmapped.
     FileFixture files;
     PanelVcf panel;
     panel.sites = repeated_sites("chr01", 3, {"0/0", "1/1", "0/0"});
@@ -233,41 +230,13 @@ TEST_CASE(
     options.vcf_path = files.create_text_file(panel.text(), ".vcf");
     options.bams_path = files.create_text_file(
         std::format(
-            "A\t{}\nB\t{}\n",
-            files.create_text_file(partly_unmapped_sam(1), ".sam").string(),
+            "B\t{}\n",
             files.create_text_file(partly_unmapped_sam(2), ".sam").string()));
     options.output_prefix = files.missing_path("").string();
-    options.max_unmapped_rate = 0.5;
 
     run(options);
 
-    SECTION("scores the sample at the rate and leaves the other out")
-    {
-        const std::string topk
-            = file_text(options.output_prefix + ".topk.tsv");
-        CAPTURE(topk);
-        REQUIRE_THAT(topk, ContainsSubstring("\nA\t"));
-        REQUIRE_THAT(topk, !ContainsSubstring("\nB\t"));
-    }
-    SECTION("writes the dropped sample as a row without scores")
-    {
-        REQUIRE_THAT(
-            file_text(options.output_prefix + ".tsv"),
-            ContainsSubstring(
-                "\nB\t1.000\tdropped\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\t"
-                "NA\tNA\tNA\tNA\tNA\n"));
-    }
-    SECTION("logs the dropped sample with its unmapped reads")
-    {
-        REQUIRE_THAT(
-            file_text(std::format("{}.log", options.output_prefix)),
-            ContainsSubstring("Sample B dropped: 2 of 3 reads unmapped"));
-    }
-    SECTION("counts the dropped sample in the summary")
-    {
-        const std::string summary
-            = file_text(options.output_prefix + ".summary.txt");
-        REQUIRE_THAT(summary, ContainsSubstring("samples\t2\n"));
-        REQUIRE_THAT(summary, ContainsSubstring("\ndropped\t1\n"));
-    }
+    const std::string table = file_text(options.output_prefix + ".tsv");
+    CAPTURE(table);
+    REQUIRE_THAT(table, ContainsSubstring("\nB\t1.000\t0.6667\t"));
 }
