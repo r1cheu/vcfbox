@@ -73,9 +73,6 @@ struct ExpectedScore
 struct SampleScores
 {
     size_t n_covered = 0;  // sites with at least one allele0/allele1 read
-    // Σ over covered sites of ln L(random panel pair); a model's ln L is this
-    // plus its lod_vs_null.
-    double null_log_likelihood = 0;
     // The `ScoreOptions::top` best of the pairs a <= b of the candidate
     // parents (plus the expected parents, when given), best lod_vs_null
     // first; ties broken by (a, b).

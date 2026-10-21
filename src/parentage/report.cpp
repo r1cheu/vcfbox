@@ -76,12 +76,12 @@ auto leading_model(const SampleScores& scores) -> Model
 
 constexpr std::string_view table_header
     = "sample\tcoverage\tbest\tbest_a\tbest_b\texpected_a\texpected_b\t"
-      "null\tsingle\tbest_pair\tsecond_pair\texpected\t"
+      "single\tbest_pair\tsecond_pair\texpected\t"
       "pair_hom_mismatch_rate\tpair_het_alt_fraction\tpair_fit\t"
       "single_allele_absent_rate\tcontest\texpected_pair_rank";
 
 // Columns after `expected_b`.
-constexpr size_t n_scored_columns = 11;
+constexpr size_t n_scored_columns = 10;
 
 auto mean_depth(const SampleCounts& counts) -> double
 {
@@ -378,7 +378,6 @@ auto ReportWriter::add(
     const Fit fit = assign_fit(scores, options_);
     const std::optional<Ambiguity> ambiguity
         = find_ambiguity(scores, options_);
-    const double null = scores.null_log_likelihood;
     const double nan = std::numeric_limits<double>::quiet_NaN();
 
     write_leading_columns(
@@ -388,14 +387,11 @@ auto ReportWriter::add(
         leading_parents(scores, names_),
         expected);
     table_ << std::format(
-        "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-        fixed(null, 1),
-        fixed(null + single.lod_vs_null, 1),
-        fixed(null + best.lod_vs_null, 1),
-        fixed(scores.top.size() < 2 ? nan : null + scores.top[1].lod_vs_null, 1),
-        fixed(
-            scores.expected ? null + scores.expected->report.lod_vs_null : nan,
-            1),
+        "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+        fixed(single.lod_vs_null, 1),
+        fixed(best.lod_vs_null, 1),
+        fixed(scores.top.size() < 2 ? nan : scores.top[1].lod_vs_null, 1),
+        fixed(scores.expected ? scores.expected->report.lod_vs_null : nan, 1),
         fixed(best.hom_mismatch_rate, 5),
         fixed(best.het_alt_fraction, 4),
         to_string(fit),

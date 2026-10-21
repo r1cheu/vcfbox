@@ -177,7 +177,7 @@ TEST_CASE(
     {
         REQUIRE(table.starts_with(
             "sample\tcoverage\tbest\tbest_a\tbest_b\texpected_a\t"
-            "expected_b\tnull\tsingle\tbest_pair\tsecond_pair\texpected\t"
+            "expected_b\tsingle\tbest_pair\tsecond_pair\texpected\t"
             "pair_hom_mismatch_rate\tpair_het_alt_fraction\tpair_fit\t"
             "single_allele_absent_rate\tcontest\texpected_pair_rank\n"));
     }
@@ -186,10 +186,10 @@ TEST_CASE(
         REQUIRE_THAT(
             table, ContainsSubstring("\nA\t1.000\tambiguous\tP1\tP1\tP3\tP1\t"));
     }
-    SECTION("writes the log-likelihoods of every model and the expected pair")
+    SECTION("writes the LOD vs null of every model and the expected pair")
     {
         REQUIRE_THAT(
-            table, ContainsSubstring("\tP3\tP1\t-1.2\t-0.6\t-0.1\t-0.1\t-0.1\t"));
+            table, ContainsSubstring("\tP3\tP1\t0.6\t1.2\t1.2\t1.2\t"));
     }
     SECTION("writes the diagnostics, the contest and the expected rank")
     {
@@ -200,7 +200,7 @@ TEST_CASE(
     {
         REQUIRE_THAT(
             table,
-            ContainsSubstring("\tP1\tQ9\t-1.2\t-0.6\t-0.1\t-0.1\tNA\t"));
+            ContainsSubstring("\tP1\tQ9\t0.6\t1.2\t1.2\tNA\t"));
         REQUIRE_THAT(table, ContainsSubstring("\tmodel\tABSENT\n"));
     }
     SECTION("lists the top pairs of every sample")
@@ -255,7 +255,7 @@ TEST_CASE(
             file_text(options.output_prefix + ".tsv"),
             ContainsSubstring(
                 "\nB\t1.000\tdropped\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\t"
-                "NA\tNA\tNA\tNA\tNA\tNA\n"));
+                "NA\tNA\tNA\tNA\tNA\n"));
     }
     SECTION("logs the dropped sample with its unmapped reads")
     {

@@ -215,7 +215,6 @@ auto count_pair(
 // kept per site where it does, and of a fixed F1 genotype at every site.
 struct SiteTerms
 {
-    double null_sum = 0;            // Σ ln L(random panel pair)
     double m0_sum = 0;              // Σ lod(parent carries allele0)
     // lod of F1 genotype 00 / 01 / 11 at site s at [3 s] / [3 s + 1] /
     // [3 s + 2]; 0 where the site has no reads.
@@ -269,7 +268,6 @@ auto build_site_terms(
         const double m0 = mix(raw0);
         const double m1 = mix(raw1);
         const double mhet = mix(log_sum_exp({raw0, raw1}) + w.het);
-        terms.null_sum += l_null;
         terms.m0_sum += m0;
         terms.m0.push_back(m0);
         terms.m1_minus_m0.push_back(m1 - m0);
@@ -547,7 +545,6 @@ auto score_sample(
 
     SampleScores scores;
     scores.n_covered = terms.covered.size();
-    scores.null_log_likelihood = terms.null_sum;
     scores.singles = score_singles(panel, terms);
     std::vector<uint32_t> parents
         = candidate_parents(scores.singles, options.candidates);
